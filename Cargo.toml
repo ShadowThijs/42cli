@@ -4,3 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+chrono-tz = "0.10.4"
+cookie = "0.18.2"
+crossterm = "0.29.0"
+dirs = "6.0.0"
+futures = "0.3.34"
+rand = "0.10.2"
+ratatui = "0.30.2"
+reqwest = { version = "0.13.4", features = ["cookies", "json", "gzip", "form", "query"] }
+scraper = "0.27.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tui-input = "0.15.4"
+unicode-width = "0.2.2"
