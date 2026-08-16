@@ -1,6 +1,6 @@
 //! `slots.42belgium.be` — open-hour slots and project slot booking.
 
-use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone};
+use chrono::{DateTime, Local, TimeZone};
 use serde_json::Value;
 
 use super::{Api, ApiError, ApiResult, Slot};
@@ -10,14 +10,24 @@ pub const CAMPUS_BX: &str = "bx";
 pub const CAMPUS_ANR: &str = "anr";
 
 /// Slot feed names accepted by the API.
-pub const STATUS_FEEDS: &[&str] = &["bx", "anr", "remote-bx", "remote-anr", "anr-local", "bx-local"];
+pub const STATUS_FEEDS: &[&str] = &[
+    "bx",
+    "anr",
+    "remote-bx",
+    "remote-anr",
+    "anr-local",
+    "bx-local",
+];
 pub const RESERVED_FEEDS: &[&str] = &["reserved-bx", "reserved-anr"];
 
 impl Api {
     fn slots_headers(&self) -> ApiResult<reqwest::header::HeaderMap> {
         let mut headers = reqwest::header::HeaderMap::new();
         let csrf = self.slots_csrf().ok_or(ApiError::MissingCsrf)?;
-        headers.insert("X-CSRFToken", csrf.parse().map_err(|_| ApiError::MissingCsrf)?);
+        headers.insert(
+            "X-CSRFToken",
+            csrf.parse().map_err(|_| ApiError::MissingCsrf)?,
+        );
         headers.insert("X-Requested-With", "XMLHttpRequest".parse().unwrap());
         Ok(headers)
     }
@@ -118,7 +128,8 @@ impl Api {
 
     /// Ask the backend to resync projects from the intranet.
     pub async fn slots_sync_projects(&self) -> ApiResult<()> {
-        self.slots_write(reqwest::Method::POST, "api/sync/", &[]).await
+        self.slots_write(reqwest::Method::POST, "api/sync/", &[])
+            .await
     }
 
     /// My open-hour slots at both campuses for the next `days` days.
@@ -137,6 +148,7 @@ impl Api {
                 )
                 .await?;
             for slot in &mut slots {
+                slot.feed = status.to_string();
                 if slot.campus.is_none() {
                     slot.campus = Some(status.to_string());
                 }
@@ -163,6 +175,7 @@ impl Api {
                 )
                 .await?;
             for slot in &mut slots {
+                slot.feed = status.to_string();
                 if slot.campus.is_none() {
                     slot.campus = Some(status.trim_start_matches("reserved-").to_string());
                 }
@@ -203,39 +216,18 @@ impl Api {
         self.slots_write(
             reqwest::Method::DELETE,
             "api/slot",
-            &[
-                ("start", rfc3339_local(start)),
-                ("end", rfc3339_local(end)),
-            ],
+            &[("start", rfc3339_local(start)), ("end", rfc3339_local(end))],
         )
         .await
     }
 
-    /// Move an open availability slot (drag on the website).
-    pub async fn move_open_slot(
-        &self,
-        old: (DateTime<Local>, DateTime<Local>),
-        new: (DateTime<Local>, DateTime<Local>),
-    ) -> ApiResult<()> {
-        self.slots_write(
-            reqwest::Method::PUT,
-            "api/slot",
-            &[
-                ("old[start]", rfc3339_local(old.0)),
-                ("old[end]", rfc3339_local(old.1)),
-                ("new[start]", rfc3339_local(new.0)),
-                ("new[end]", rfc3339_local(new.1)),
-            ],
-        )
-        .await
-    }
-
-    /// Available booking slots for a project session.
+    /// Slots for a project session: bookable ones plus the user's own
+    /// reservations (marked `reserved` so the UI can offer cancel).
     pub async fn project_slots(&self, ps_id: u32, days: i64) -> ApiResult<Vec<Slot>> {
         let (start, end) = range_for(days);
         let mut all = Vec::new();
-        for status in STATUS_FEEDS {
-            if let Ok(slots) = self
+        for status in STATUS_FEEDS.iter().chain(RESERVED_FEEDS) {
+            if let Ok(mut slots) = self
                 .slots_feed(
                     &format!("api/project_slots/{ps_id}"),
                     &[
@@ -246,6 +238,11 @@ impl Api {
                 )
                 .await
             {
+                let reserved = status.starts_with("reserved-");
+                for slot in &mut slots {
+                    slot.feed = status.to_string();
+                    slot.reserved = reserved;
+                }
                 all.extend(slots);
             }
         }
@@ -265,36 +262,11 @@ impl Api {
     }
 
     /// Cancel a project slot reservation.
-    pub async fn cancel_project_slot(
-        &self,
-        ps_id: u32,
-        time: &str,
-        campus: &str,
-    ) -> ApiResult<()> {
+    pub async fn cancel_project_slot(&self, ps_id: u32, time: &str, campus: &str) -> ApiResult<()> {
         self.slots_write(
             reqwest::Method::DELETE,
             &format!("api/project_slots/{ps_id}"),
             &[("time", time.to_string()), ("campus", campus.to_string())],
-        )
-        .await
-    }
-
-    /// Set the preferred campus on the slots site.
-    pub async fn slots_campus_preference(&self, campus: &str) -> ApiResult<()> {
-        self.slots_write(
-            reqwest::Method::POST,
-            "campus/preference",
-            &[("campus", campus.to_string())],
-        )
-        .await
-    }
-
-    /// Toggle inter-campus (remote) slot visibility.
-    pub async fn slots_remote_preference(&self, enabled: bool) -> ApiResult<()> {
-        self.slots_write(
-            reqwest::Method::POST,
-            "remote/preference",
-            &[("remote", enabled.to_string())],
         )
         .await
     }
@@ -309,15 +281,13 @@ fn rfc3339_local(at: DateTime<Local>) -> String {
 /// `[start, end]` range strings covering today .. today + `days`.
 fn range_for(days: i64) -> (String, String) {
     let today = Local::now().date_naive();
-    let begin = today
-        .and_hms_opt(0, 0, 0)
-        .and_then(|naive| Local.from_local_datetime(&naive).single())
-        .unwrap_or_else(Local::now);
-    let end_date = today + ChronoDuration::try_days(days).unwrap_or_default();
-    let end = end_date
-        .and_hms_opt(0, 0, 0)
-        .and_then(|naive| Local.from_local_datetime(&naive).single())
-        .unwrap_or_else(Local::now);
+    let to_local_midnight = |date: chrono::NaiveDate| {
+        date.and_hms_opt(0, 0, 0)
+            .and_then(|naive| Local.from_local_datetime(&naive).single())
+            .unwrap_or_else(Local::now)
+    };
+    let begin = to_local_midnight(today);
+    let end = to_local_midnight(today + chrono::Duration::try_days(days).unwrap_or_default());
     (rfc3339_local(begin), rfc3339_local(end))
 }
 
@@ -347,7 +317,11 @@ pub fn slot_label(slot: &Slot) -> String {
     let end = slot.end.as_deref().and_then(parse_slot_time);
     let date = start.format("%a %d %b");
     match end {
-        Some(end) => format!("{date}  {} → {}", start.format("%H:%M"), end.format("%H:%M")),
+        Some(end) => format!(
+            "{date}  {} → {}",
+            start.format("%H:%M"),
+            end.format("%H:%M")
+        ),
         None => format!("{date}  {}", start.format("%H:%M")),
     }
 }

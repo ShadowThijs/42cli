@@ -8,11 +8,12 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Api, ApiError, ApiResult, TokenSet, FRONTEND_CLIENT, KEYCLOAK_BASE, PROFILE_V3_REDIRECT,
+    Api, ApiError, ApiResult, FRONTEND_CLIENT, KEYCLOAK_BASE, PROFILE_V3_REDIRECT, TokenSet,
 };
 use crate::config::{self, StoredSession};
 
-const INTRA_OAUTH_CALLBACK: &str = "https://profile.intra.42.fr/users/auth/keycloak_student/callback";
+const INTRA_OAUTH_CALLBACK: &str =
+    "https://profile.intra.42.fr/users/auth/keycloak_student/callback";
 const SLOTS_NEXT: &str = "https://slots.42belgium.be/slots";
 
 /// Result of a successful interactive login.
@@ -60,8 +61,10 @@ pub async fn login(api: &Api, username: &str, password: &str) -> ApiResult<Login
         extract_query_param(&location, "code")?
     } else {
         let html = resp.text().await.unwrap_or_default();
-        let action = parse_login_form_action(&html)
-            .ok_or_else(|| ApiError::Parse { endpoint: "keycloak", detail: "no login form".into() })?;
+        let action = parse_login_form_action(&html).ok_or_else(|| ApiError::Parse {
+            endpoint: "keycloak",
+            detail: "no login form".into(),
+        })?;
         // 2. Submit credentials; Keycloak answers 302 with `code` on success.
         let resp = api
             .noredirect
@@ -201,22 +204,30 @@ pub(super) async fn refresh_tokens(
 
 /// Pull `preferred_username` / `user_id` out of the access token payload.
 fn decode_jwt_identity(token: &str) -> ApiResult<(String, u32)> {
-    let payload_b64 = token
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| ApiError::Parse { endpoint: "jwt", detail: "no payload".into() })?;
+    let payload_b64 = token.split('.').nth(1).ok_or_else(|| ApiError::Parse {
+        endpoint: "jwt",
+        detail: "no payload".into(),
+    })?;
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload_b64)
-        .map_err(|error| ApiError::Parse { endpoint: "jwt", detail: error.to_string() })?;
-    let payload: Value = serde_json::from_slice(&payload)
-        .map_err(|error| ApiError::Parse { endpoint: "jwt", detail: error.to_string() })?;
+        .map_err(|error| ApiError::Parse {
+            endpoint: "jwt",
+            detail: error.to_string(),
+        })?;
+    let payload: Value = serde_json::from_slice(&payload).map_err(|error| ApiError::Parse {
+        endpoint: "jwt",
+        detail: error.to_string(),
+    })?;
     let login = payload["preferred_username"]
         .as_str()
         .unwrap_or_default()
         .to_owned();
     let user_id = payload["user_id"].as_u64().unwrap_or_default() as u32;
     if login.is_empty() {
-        return Err(ApiError::Parse { endpoint: "jwt", detail: "no username".into() });
+        return Err(ApiError::Parse {
+            endpoint: "jwt",
+            detail: "no username".into(),
+        });
     }
     Ok((login, user_id))
 }
@@ -241,10 +252,7 @@ pub async fn bootstrap_intra_session(api: &Api) -> bool {
 pub async fn bootstrap_slots_session(api: &Api) -> bool {
     let _ = api
         .http
-        .get(format!(
-            "{}/login/?next={SLOTS_NEXT}",
-            super::ACCOUNTS_BASE
-        ))
+        .get(format!("{}/login/?next={SLOTS_NEXT}", super::ACCOUNTS_BASE))
         .send()
         .await;
     let Ok(resp) = api
@@ -281,11 +289,11 @@ pub async fn persist_session(api: &Api) {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         access_expires_at: tokens.access_expires_at,
-        login: identity.as_ref().map_or_else(String::new, |(l, _)| l.clone()),
+        login: identity
+            .as_ref()
+            .map_or_else(String::new, |(l, _)| l.clone()),
         user_id: identity.as_ref().map_or(0, |(_, id)| *id),
-        cookies: api
-            .cookies
-            .snapshot(chrono::Utc::now().timestamp()),
+        cookies: api.cookies.snapshot(chrono::Utc::now().timestamp()),
     };
     if let Err(error) = config::save_session(&session) {
         tracing_note(&error.to_string());

@@ -2,10 +2,10 @@
 
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ApiError {
     #[error("network: {0}")]
-    Network(#[from] reqwest::Error),
+    Network(String),
 
     #[error("bad credentials")]
     BadCredentials,
@@ -27,6 +27,12 @@ pub enum ApiError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl From<reqwest::Error> for ApiError {
+    fn from(error: reqwest::Error) -> Self {
+        ApiError::Network(error.to_string())
+    }
 }
 
 impl ApiError {

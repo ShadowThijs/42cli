@@ -15,10 +15,8 @@ impl Api {
         fresh: bool,
     ) -> ApiResult<super::LocationStats> {
         let key = format!("logtime/{login}");
-        if !fresh {
-            if let Some(cached) = self.cache.get(&key, TTL_LOGTIME) {
-                return Ok(cached);
-            }
+        if !fresh && let Some(cached) = self.cache.get(&key, TTL_LOGTIME) {
+            return Ok(cached);
         }
         let stats: super::LocationStats = self
             .authed_get(&format!(
@@ -31,10 +29,7 @@ impl Api {
     }
 
     /// Weekly attendance totals for the last four weeks.
-    pub async fn attendance_summary(
-        &self,
-        user_id: u32,
-    ) -> ApiResult<super::AttendanceSummary> {
+    pub async fn attendance_summary(&self, user_id: u32) -> ApiResult<super::AttendanceSummary> {
         self.authed_get(&format!(
             "{}/attendance/{user_id}/summary",
             super::EDTRAX_BASE

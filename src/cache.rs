@@ -82,7 +82,9 @@ mod tests {
     fn roundtrip() {
         let cache = DiskCache::new();
         cache.put("test/roundtrip", &vec![1u32, 2, 3]);
-        let value: Vec<u32> = cache.get("test/roundtrip", Duration::from_secs(60)).unwrap();
+        let value: Vec<u32> = cache
+            .get("test/roundtrip", Duration::from_secs(60))
+            .unwrap();
         assert_eq!(value, vec![1, 2, 3]);
     }
 }

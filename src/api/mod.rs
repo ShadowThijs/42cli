@@ -11,7 +11,7 @@ pub mod web;
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::{Client, ClientBuilder, Url};
+use reqwest::{Client, ClientBuilder};
 use tokio::sync::RwLock;
 
 use crate::cache::DiskCache;
@@ -31,7 +31,6 @@ pub const PACE_BASE: &str = "https://pace-system.42.fr/api/v1";
 pub const PROJECTS_BASE: &str = "https://projects.intra.42.fr";
 pub const PROFILE_BASE: &str = "https://profile.intra.42.fr";
 pub const META_BASE: &str = "https://meta.intra.42.fr";
-pub const CDN_BASE: &str = "https://cdn.intra.42.fr";
 
 pub const SLOTS_BASE: &str = "https://slots.42belgium.be";
 pub const ACCOUNTS_BASE: &str = "https://accounts.42belgium.be";
@@ -101,10 +100,7 @@ impl Api {
         url: &str,
         _retry: bool,
     ) -> ApiResult<T> {
-        let tokens = self
-            .tokens()
-            .await
-            .ok_or(ApiError::SessionExpired)?;
+        let tokens = self.tokens().await.ok_or(ApiError::SessionExpired)?;
         let resp = self
             .http
             .get(url)
@@ -116,12 +112,10 @@ impl Api {
         if !status.is_success() {
             return Err(ApiError::from_response("api", resp).await);
         }
-        resp.json::<T>()
-            .await
-            .map_err(|error| ApiError::Parse {
-                endpoint: "api",
-                detail: error.to_string(),
-            })
+        resp.json::<T>().await.map_err(|error| ApiError::Parse {
+            endpoint: "api",
+            detail: error.to_string(),
+        })
     }
 
     /// Refresh the access token via the stored refresh token.
@@ -158,11 +152,4 @@ fn client_builder(cookies: &Arc<PersistentCookieStore>) -> ApiResult<ClientBuild
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .gzip(true))
-}
-
-/// Absolute URL join helper (avoids pulling in `Url` everywhere).
-pub fn url_join(base: &str, path: &str) -> Url {
-    Url::parse(base)
-        .and_then(|base| base.join(path))
-        .unwrap_or_else(|_| Url::parse(path).expect("static url"))
 }

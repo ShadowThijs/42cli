@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use cookie::Cookie as RawCookie;
-use reqwest::header::HeaderValue;
 use reqwest::Url;
+use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
 /// A single stored cookie, reduced to the fields we need for matching.
@@ -98,8 +98,7 @@ impl PersistentCookieStore {
         if cookie_path == request_path {
             return true;
         }
-        if request_path.starts_with(cookie_path) {
-            let tail = &request_path[cookie_path.len()..];
+        if let Some(tail) = request_path.strip_prefix(cookie_path) {
             return cookie_path.ends_with('/') || tail.starts_with('/');
         }
         false
@@ -150,7 +149,11 @@ impl reqwest::cookie::CookieStore for PersistentCookieStore {
     fn cookies(&self, url: &Url) -> Option<HeaderValue> {
         let now = chrono::Utc::now().timestamp();
         let host = url.host_str()?.to_lowercase();
-        let request_path = if url.path().is_empty() { "/" } else { url.path() };
+        let request_path = if url.path().is_empty() {
+            "/"
+        } else {
+            url.path()
+        };
 
         let mut jars = self.jars.lock().expect("cookie store poisoned");
         let mut pairs: Vec<String> = Vec::new();

@@ -286,4 +286,11 @@ pub struct Slot {
     pub campus: Option<String>,
     #[serde(default)]
     pub remote: bool,
+    /// Set locally for slots coming from a `reserved-*` feed.
+    #[serde(default)]
+    pub reserved: bool,
+    /// Feed name the slot was fetched from (`bx`, `remote-bx`, …) — the
+    /// value the booking endpoints expect as `campus`.
+    #[serde(default)]
+    pub feed: String,
 }

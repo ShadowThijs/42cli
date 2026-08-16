@@ -36,12 +36,10 @@ impl Api {
                 // We were bounced to an HTML login page: session is dead.
                 return Err(ApiError::SessionExpired);
             }
-            resp.json::<T>()
-                .await
-                .map_err(|error| ApiError::Parse {
-                    endpoint: "intra web",
-                    detail: error.to_string(),
-                })
+            resp.json::<T>().await.map_err(|error| ApiError::Parse {
+                endpoint: "intra web",
+                detail: error.to_string(),
+            })
         };
         match fetch().await {
             Ok(value) => Ok(value),
@@ -64,10 +62,8 @@ impl Api {
         fresh: bool,
     ) -> ApiResult<Vec<super::ProjectDataEntry>> {
         let key = format!("project_data/{cursus_id}/{campus_id}");
-        if !fresh {
-            if let Some(cached) = self.cache.get(&key, TTL_GRAPH) {
-                return Ok(cached);
-            }
+        if !fresh && let Some(cached) = self.cache.get(&key, TTL_GRAPH) {
+            return Ok(cached);
         }
         let entries: Vec<super::ProjectDataEntry> = self
             .web_get_json(&format!(
@@ -91,28 +87,21 @@ impl Api {
 
     /// Currently occupied cluster seats across campuses.
     pub async fn cluster_seats(&self, fresh: bool) -> ApiResult<Vec<super::ClusterSeat>> {
-        if !fresh {
-            if let Some(cached) = self.cache.get("clusters", TTL_CLUSTERS) {
-                return Ok(cached);
-            }
+        if !fresh && let Some(cached) = self.cache.get("clusters", TTL_CLUSTERS) {
+            return Ok(cached);
         }
-        let seats: Vec<super::ClusterSeat> =
-            self.web_get_json(&format!("{}/clusters.json", super::META_BASE)).await?;
+        let seats: Vec<super::ClusterSeat> = self
+            .web_get_json(&format!("{}/clusters.json", super::META_BASE))
+            .await?;
         self.cache.put("clusters", &seats);
         Ok(seats)
     }
 
     /// Scrape `projects.intra.42.fr/{slug}/mine` for team + attachments.
-    pub async fn project_mine(
-        &self,
-        slug: &str,
-        fresh: bool,
-    ) -> ApiResult<super::ProjectMine> {
+    pub async fn project_mine(&self, slug: &str, fresh: bool) -> ApiResult<super::ProjectMine> {
         let key = format!("mine/{slug}");
-        if !fresh {
-            if let Some(cached) = self.cache.get(&key, TTL_MINE) {
-                return Ok(cached);
-            }
+        if !fresh && let Some(cached) = self.cache.get(&key, TTL_MINE) {
+            return Ok(cached);
         }
         let fetch = || async {
             let resp = self
@@ -161,9 +150,8 @@ impl Api {
         let dir = crate::config::downloads_dir();
         let safe_name = name.replace(['/', '\\'], "_");
         let path = dir.join(safe_name);
-        std::fs::write(&path, &bytes).map_err(|error| {
-            ApiError::Other(format!("write {}: {error}", path.display()))
-        })?;
+        std::fs::write(&path, &bytes)
+            .map_err(|error| ApiError::Other(format!("write {}: {error}", path.display())))?;
         Ok(path.display().to_string())
     }
 }
@@ -190,12 +178,12 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
     ) {
         for team in document.select(&selector) {
             for link in team.select(&user_selector) {
-                if let Some(href) = link.attr("href") {
-                    if let Some(login) = href.rsplit('/').next() {
-                        if !login.is_empty() && !mine.members.iter().any(|m| m == login) {
-                            mine.members.push(login.to_owned());
-                        }
-                    }
+                if let Some(href) = link.attr("href")
+                    && let Some(login) = href.rsplit('/').next()
+                    && !login.is_empty()
+                    && !mine.members.iter().any(|m| m == login)
+                {
+                    mine.members.push(login.to_owned());
                 }
             }
         }
@@ -219,19 +207,18 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
 
     if let (Ok(selector), name_selector) = (
         Selector::parse(".project-attachment-item"),
-        Selector::parse(".attachment-name a")
-            .expect("static selector")
+        Selector::parse(".attachment-name a").expect("static selector"),
     ) {
         for item in document.select(&selector) {
-            if let Some(link) = item.select(&name_selector).next() {
-                if let Some(href) = link.attr("href") {
-                    let name = link.text().collect::<String>().trim().to_owned();
-                    if !name.is_empty() {
-                        mine.attachments.push(super::Attachment {
-                            name,
-                            url: href.to_owned(),
-                        });
-                    }
+            if let Some(link) = item.select(&name_selector).next()
+                && let Some(href) = link.attr("href")
+            {
+                let name = link.text().collect::<String>().trim().to_owned();
+                if !name.is_empty() {
+                    mine.attachments.push(super::Attachment {
+                        name,
+                        url: href.to_owned(),
+                    });
                 }
             }
         }
