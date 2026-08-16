@@ -125,14 +125,21 @@ impl App {
         match tab {
             Tab::Projects if !self.loaded.projects => {
                 self.loaded.projects = true;
+                self.projects.graph.start();
+                self.projects.ongoing.start();
+                self.projects.marked.start();
                 self.send(Command::LoadProjects { fresh: false });
             }
             Tab::Clusters if !self.loaded.clusters => {
                 self.loaded.clusters = true;
+                self.clusters.seats.start();
                 self.send(Command::LoadClusters { fresh: false });
             }
             Tab::Slots if !self.loaded.slots => {
                 self.loaded.slots = true;
+                self.slots.projects.start();
+                self.slots.open.start();
+                self.slots.reserved.start();
                 self.send(Command::LoadSlotsOverview);
             }
             _ => {}
