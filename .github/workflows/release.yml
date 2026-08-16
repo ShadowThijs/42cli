@@ -40,12 +40,12 @@ jobs:
           ldd target/${{ env.TARGET }}/release/${{ env.BIN_NAME }} || true
       - name: Rename binary
         run: |
-          cp target/${{ env.TARGET }}/release/${{ env.BIN_NAME }} ${{ env.BIN_NAME }}-linux-x86_64
+          cp target/${{ env.TARGET }}/release/${{ env.BIN_NAME }} ${{ env.BIN_NAME }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: build-linux
-          path: ${{ env.BIN_NAME }}-linux-x86_64
+          path: ${{ env.BIN_NAME }}
 
   release:
     needs: build
