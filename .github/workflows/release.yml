@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release"
+        required: true
+      notes:
+        description: "Release notes"
+        required: false
+        default: ""
+
+env:
+  BIN_NAME: cli42
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build (static)
+        run: cargo build --release --target ${{ env.TARGET }}
+      - name: Verify static linking
+        run: |
+          file target/${{ env.TARGET }}/release/${{ env.BIN_NAME }}
+          ldd target/${{ env.TARGET }}/release/${{ env.BIN_NAME }} || true
+      - name: Rename binary
+        run: |
+          cp target/${{ env.TARGET }}/release/${{ env.BIN_NAME }} ${{ env.BIN_NAME }}-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-linux
+          path: ${{ env.BIN_NAME }}-linux-x86_64
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve tag and notes
+        id: meta
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${{ github.event.inputs.notes }}" ]; then
+            NOTES="${{ github.event.inputs.notes }}"
+          else
+            NOTES="$(git tag -l --format='%(contents)' "$TAG")"
+          fi
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          body: ${{ steps.meta.outputs.notes }}
+          files: dist/*
