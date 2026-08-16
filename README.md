@@ -11,6 +11,8 @@ cargo run --release
 Sessions (tokens + cookies) are cached in `~/.config/42cli/session.json`
 (`0600`) and restored on next start — the refresh token lasts ~30 days.
 
+![Demo](images/demo.gif)
+
 ## Features
 
 - **Dashboard** — level with percentage, grade, wallet, evaluation
