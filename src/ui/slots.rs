@@ -24,8 +24,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let header = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
     frame.render_widget(
         Line::from(vec![
-            mode_span(" [o] project booking ", mode == SlotsMode::Overview),
-            mode_span(" [h] open hours ", mode == SlotsMode::Hours),
+            mode_span(" [p] project booking ", mode == SlotsMode::Overview),
+            mode_span(" [o] open hours ", mode == SlotsMode::Hours),
             Span::styled("   s=sync  r=reload", theme::muted()),
         ]),
         header[0],
@@ -198,15 +198,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     }
     let mode = app.slots.mode.unwrap_or(SlotsMode::Overview);
     match (mode, key.code) {
-        (_, KeyCode::Char('h')) => enter(app, SlotsMode::Hours),
-        (_, KeyCode::Char('o')) | (_, KeyCode::Char('b')) => enter(app, SlotsMode::Overview),
+        (_, KeyCode::Char('o')) => enter(app, SlotsMode::Hours),
+        (_, KeyCode::Char('p')) | (_, KeyCode::Char('b')) => enter(app, SlotsMode::Overview),
         (_, KeyCode::Char('s')) => app.send(Command::SyncSlotsProjects),
 
         (SlotsMode::Hours, KeyCode::Up | KeyCode::Char('k')) => {
             app.slots.open_sel = app.slots.open_sel.saturating_sub(1)
         }
         (SlotsMode::Hours, KeyCode::Down | KeyCode::Char('j')) => app.slots.open_sel += 1,
-        (SlotsMode::Hours, KeyCode::Char('f') | KeyCode::Enter) => {
+        (SlotsMode::Hours, KeyCode::Tab | KeyCode::Char('f') | KeyCode::Enter) => {
             app.slots.focus = SlotsFocus::Form
         }
         (SlotsMode::Hours, KeyCode::Delete | KeyCode::Char('d')) => delete_open(app),

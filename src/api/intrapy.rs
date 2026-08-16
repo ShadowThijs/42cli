@@ -97,13 +97,26 @@ impl Api {
             .await
     }
 
-    pub async fn my_notifications(&self, read: bool) -> ApiResult<Vec<super::Notification>> {
-        let segment = if read { "read" } else { "unread" };
-        self.authed_get(&format!(
-            "{}/users/me/notifications/{segment}",
-            super::INTRAPY_BASE
-        ))
-        .await
+    /// Unread + recent read notifications in one payload.
+    pub async fn my_notifications(&self) -> ApiResult<super::NotificationsPayload> {
+        let base = format!("{}/users/me/notifications", super::INTRAPY_BASE);
+        let unread_value: serde_json::Value = self.authed_get(&format!("{base}/unread")).await?;
+        let unread = unread_value["count"].as_u64().unwrap_or(0) as usize;
+        let mut items = match unread_value.get("notifications") {
+            Some(serde_json::Value::Array(list)) => list
+                .clone()
+                .into_iter()
+                .filter_map(|item| serde_json::from_value(item).ok())
+                .collect::<Vec<super::Notification>>(),
+            _ => Vec::new(),
+        };
+        if let Ok(read) = self
+            .authed_get::<Vec<super::Notification>>(&format!("{base}/read"))
+            .await
+        {
+            items.extend(read);
+        }
+        Ok(super::NotificationsPayload { unread, items })
     }
 
     pub async fn user_patroning(&self, login: &str) -> ApiResult<Vec<super::PatronUser>> {

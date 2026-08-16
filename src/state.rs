@@ -68,7 +68,7 @@ pub struct Dashboard {
     pub cursus: Loadable<Vec<Cursus>>,
     pub campuses: Loadable<Vec<Campus>>,
     pub events: Loadable<Vec<IntraEvent>>,
-    pub notifications: Loadable<Vec<Notification>>,
+    pub notifications: Loadable<NotificationsPayload>,
     pub scale_teams: Loadable<Vec<ScaleTeam>>,
     pub logtime: Loadable<LocationStats>,
     pub pace: Loadable<PaceProfile>,
@@ -216,11 +216,17 @@ pub struct ClusterRow {
 }
 
 impl ClustersState {
-    /// Group occupied seats by cluster prefix (`fu-r2-p7` -> `fu`).
-    pub fn rows(&self) -> Vec<ClusterRow> {
+    /// Group occupied seats of one campus by cluster prefix
+    /// (`fu-r2-p7` -> `fu`, `wifi-5` -> `wifi`).
+    pub fn rows(&self, campus_id: Option<u32>) -> Vec<ClusterRow> {
         let mut clusters: HashMap<String, Vec<ClusterSeat>> = HashMap::new();
         if let Some(seats) = self.seats.data() {
             for seat in seats.clone() {
+                if let Some(campus) = campus_id
+                    && seat.campus_id != Some(campus)
+                {
+                    continue;
+                }
                 let host = seat.host.clone().unwrap_or_default();
                 let cluster = host
                     .split('-')

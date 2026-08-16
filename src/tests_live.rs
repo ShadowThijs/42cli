@@ -54,6 +54,8 @@ async fn login_and_read_everything() {
     assert!(profile.evaluation_points.is_some());
 
     api.my_events(true).await.expect("events");
+    let notifications = api.my_notifications().await.expect("notifications");
+    assert!(notifications.unread < 100, "sane unread count");
     api.my_scale_teams().await.expect("scale teams");
     api.locations_stats(summary.login.as_deref().unwrap(), true)
         .await
@@ -121,3 +123,4 @@ async fn restore_from_persisted_session() {
     api.refresh().await.expect("refresh from stored token");
     api.me_summary(true).await.expect("summary after refresh");
 }
+

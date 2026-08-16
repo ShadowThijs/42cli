@@ -168,17 +168,20 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
     if let Some(rules) = &entry.rules {
-        lines.push(Line::from(Span::styled(
-            wrap(rules, inner.width as usize),
-            theme::muted(),
-        )));
+        lines.push(Line::from(Span::styled("rules", theme::title())));
+        lines.extend(
+            util::wrap_lines(rules, inner.width as usize, RULES_LINES)
+                .into_iter()
+                .map(|line| line.style(theme::muted())),
+        );
     }
     if let Some(description) = &entry.description {
-        lines.push(Line::from(Span::styled(
-            wrap(description, inner.width as usize),
-            theme::muted(),
-        )));
         lines.push(Line::from(""));
+        lines.extend(
+            util::wrap_lines(description, inner.width as usize, DESCRIPTION_LINES)
+                .into_iter()
+                .map(|line| line.style(theme::muted())),
+        );
     }
 
     // Team + attachments from the scraped `/{slug}/mine` page.
@@ -248,22 +251,9 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn wrap(text: &str, width: usize) -> String {
-    textwrap_lite(text, width.max(8))
-}
-
-fn textwrap_lite(text: &str, width: usize) -> String {
-    let mut out = String::new();
-    for (index, word) in text.split_whitespace().enumerate() {
-        if index > 0 && out.len() % width + word.len() + 1 > width {
-            out.push('\n');
-        } else if index > 0 {
-            out.push(' ');
-        }
-        out.push_str(word);
-    }
-    out
-}
+/// Wrapped-line budget so team + attachments stay visible.
+const RULES_LINES: usize = 3;
+const DESCRIPTION_LINES: usize = 6;
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     // Filter capture mode.
@@ -278,6 +268,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
         }
         app.projects.selection = 0;
+        return Action::Continue;
+    }
+
+    // Tab toggles between the list pane and the details pane.
+    if key.code == KeyCode::Tab {
+        app.projects.focus_details = !app.projects.focus_details;
+        app.projects.attachment_sel = 0;
         return Action::Continue;
     }
 

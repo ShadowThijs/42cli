@@ -124,9 +124,87 @@ pub fn now_brussels() -> String {
     now.format("%a %d %b %H:%M:%S").to_string()
 }
 
-/// Level as `4.15` with its percentage toward the next level.
-pub fn level_percent(level: f64) -> (u32, u32) {
-    let floor = level.floor() as u32;
-    let percent = ((level - level.floor()) * 100.0).round() as u32;
-    (floor, percent.min(100))
+/// Where the current pace milestone started: the latest validated
+/// milestone's date, or the cursus begin date when none validated yet.
+pub fn pace_milestone_start(pace: &crate::api::models::PaceProfile) -> Option<NaiveDate> {
+    let latest_validated = pace
+        .milestones
+        .iter()
+        .filter_map(|milestone| {
+            milestone
+                .validated_at
+                .as_deref()
+                .and_then(parse_datetime)
+                .map(|at| at.date_naive())
+        })
+        .max();
+    latest_validated.or_else(|| {
+        pace.cursus_begin_date
+            .as_deref()
+            .and_then(parse_datetime)
+            .map(|at| at.date_naive())
+    })
+}
+
+/// Word-wrap `text` to `width` display columns, capped at `max_lines`
+/// (the last line gets an ellipsis when cut). Returns styled lines.
+pub fn wrap_lines(text: &str, width: usize, max_lines: usize) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::style::Style;
+    use ratatui::text::{Line, Span};
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+    let width = width.max(8);
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for word in text.split_whitespace() {
+        let word_width = word.width();
+        let separator = if current.is_empty() { 0 } else { 1 };
+        if current_width + separator + word_width > width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            if lines.len() >= max_lines {
+                break;
+            }
+        }
+        if !current.is_empty() {
+            current.push(' ');
+            current_width += 1;
+        }
+        if word_width <= width {
+            current.push_str(word);
+            current_width += word_width;
+        } else {
+            // Single word longer than the pane: hard-split it.
+            for ch in word.chars() {
+                if current_width + ch.width().unwrap_or(0) >= width {
+                    lines.push(std::mem::take(&mut current));
+                    current_width = 0;
+                    if lines.len() >= max_lines {
+                        break;
+                    }
+                }
+                current.push(ch);
+                current_width += ch.width().unwrap_or(0);
+            }
+        }
+    }
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(current);
+    }
+    if lines.len() > max_lines {
+        lines.truncate(max_lines);
+    }
+    if lines.len() == max_lines
+        && let Some(last) = lines.last_mut()
+    {
+        let mut cut: String = last.chars().take(width.saturating_sub(1)).collect();
+        cut.push('…');
+        *last = cut;
+    }
+    lines
+        .into_iter()
+        .map(|line| Line::from(Span::styled(line, Style::default())))
+        .collect()
 }

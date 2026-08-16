@@ -119,7 +119,8 @@ fn draw_identity(frame: &mut Frame, app: &App, area: Rect) {
     let gauge_area = gauge_block.inner(rows[1]);
     frame.render_widget(gauge_block, rows[1]);
     if let Some(cursus) = app.dash.main_cursus() {
-        let (level, percent) = util::level_percent(cursus.level.unwrap_or_default());
+        let level = cursus.level.unwrap_or_default() as u32;
+        let percent = cursus.progress.unwrap_or_default().min(100);
         widgets::mini_gauge(
             frame,
             gauge_area,
@@ -132,10 +133,15 @@ fn draw_identity(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // -- pace / blackhole ------------------------------------------------
-    let blackhole = app
-        .dash
-        .main_cursus()
-        .and_then(|cursus| cursus.blackholed_at.clone());
+    // With the pace system active there is no blackhole — the milestone
+    // deadline replaces it.
+    let blackhole = if app.dash.pace.data().is_some_and(|pace| pace.is_activated) {
+        None
+    } else {
+        app.dash
+            .main_cursus()
+            .and_then(|cursus| cursus.blackholed_at.clone())
+    };
     widgets::loadable(
         frame,
         rows[2],
@@ -149,30 +155,36 @@ fn draw_identity(frame: &mut Frame, app: &App, area: Rect) {
                 theme::text(),
             )];
             if let Some(deadline) = &pace.deadline {
-                let days = util::days_until(deadline).unwrap_or_default();
-                let begin = pace.cursus_begin_date.as_deref().unwrap_or("");
-                let elapsed = util::days_until(begin).map(|d| -d).unwrap_or_default();
+                let deadline_date = util::parse_datetime(deadline).map(|at| at.date_naive());
+                let left = util::days_until(deadline).unwrap_or_default();
                 lines.push(widgets::kv(
                     "milestone",
                     format!(
-                        "L{} · {} ({} left)",
+                        "L{} · {} ({} days left)",
                         pace.milestone.unwrap_or_default(),
                         util::fmt_date(deadline),
-                        days
+                        left
                     ),
-                    if days < 0 {
+                    if left < 0 {
                         theme::error()
-                    } else if days < 14 {
+                    } else if left < 14 {
                         theme::warn()
                     } else {
                         theme::good()
                     },
                 ));
-                lines.push(widgets::kv(
-                    "elapsed",
-                    format!("{elapsed} days since start"),
-                    theme::text(),
-                ));
+                if let Some(deadline_date) = deadline_date {
+                    let start = util::pace_milestone_start(pace);
+                    if let Some(start) = start {
+                        let total = (deadline_date - start).num_days().max(1);
+                        let elapsed = (chrono::Local::now().date_naive() - start).num_days();
+                        lines.push(widgets::kv(
+                            "progress",
+                            format!("{elapsed} / {total} days in milestone"),
+                            theme::text(),
+                        ));
+                    }
+                }
             }
             if let Some(blackhole) = &blackhole {
                 let days = util::days_until(blackhole).unwrap_or_default();
@@ -239,8 +251,7 @@ fn draw_right(frame: &mut Frame, app: &App, area: Rect) {
                 height: area.height.saturating_sub(2),
                 ..area
             };
-            let bars = util::logtime_bars(stats, 30);
-            frame.render_widget(widgets::hours_chart(&bars), chart_area);
+            frame.render_widget(widgets::logtime_sparkline(stats, 30), chart_area);
             let week = util::logtime_last_days(stats, 7);
             let month = util::logtime_last_days(stats, 30);
             let today = stats

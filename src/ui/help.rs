@@ -1,40 +1,42 @@
 //! Help overlay listing every key binding.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use super::theme;
 
 const BINDINGS: &[(&str, &str)] = &[
-    ("1..6 / Tab", "switch tab"),
+    ("global", ""),
+    ("F1 .. F6", "switch tab"),
+    ("Tab", "move between panes"),
     ("r", "refresh current tab (bypass cache)"),
     ("n", "notifications overlay"),
     ("?", "this help"),
     ("q / Ctrl+C", "quit"),
     ("L", "logout"),
     ("", ""),
-    ("— projects —", ""),
-    ("/", "focus filter"),
+    ("projects", ""),
+    ("/", "focus filter · Esc leaves"),
     ("← →", "segment: active / available / done / all"),
     ("↑ ↓ / j k", "move selection"),
-    ("Enter", "open details"),
-    ("↑ ↓ + d", "download selected document"),
-    ("Esc", "back to the list"),
+    ("Tab / Enter", "focus details"),
+    ("d", "download selected document"),
     ("", ""),
-    ("— slots —", ""),
-    ("o / h", "project booking / open hours"),
+    ("slots", ""),
+    ("p / o", "project booking / open hours"),
     ("← →", "previous / next project"),
     ("↑ ↓ + Enter", "select slot, book (★ = cancel)"),
-    ("f", "focus the open-hour form"),
+    ("Tab / f", "focus the open-hour form"),
     ("c / t", "campus / inter-campus toggle"),
     ("d", "close selected open hour"),
     ("s", "sync slots projects"),
 ];
 
 pub fn draw(frame: &mut Frame, area: Rect) {
-    let popup = centered(area, 46, 30);
+    let popup = centered(area, 48, 26);
     let block = theme::pane(false).title(Span::styled(" help ", theme::title()));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
@@ -42,11 +44,11 @@ pub fn draw(frame: &mut Frame, area: Rect) {
     let lines: Vec<Line> = BINDINGS
         .iter()
         .map(|(keys, action)| {
-            if action.is_empty() && !keys.is_empty() {
+            if action.is_empty() {
                 Line::from(Span::styled(*keys, theme::title()))
             } else {
                 Line::from(vec![
-                    Span::styled(format!("{keys:<16}"), super::theme::bright()),
+                    Span::styled(format!("{keys:<18}"), theme::bright()),
                     Span::styled(*action, theme::text()),
                 ])
             }

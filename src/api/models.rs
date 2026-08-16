@@ -127,10 +127,18 @@ pub struct IntraEvent {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Notification {
-    pub id: Option<u64>,
+    pub title: Option<String>,
+    pub text: Option<String>,
     pub created_at: Option<String>,
-    #[serde(flatten)]
-    pub raw: serde_json::Value,
+    pub link: Option<String>,
+}
+
+/// Unread notifications come wrapped in `{count, notifications}` while the
+/// read feed is a bare array; normalize into one display payload.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NotificationsPayload {
+    pub unread: usize,
+    pub items: Vec<Notification>,
 }
 
 /// Evaluation slots the user must give (`/users/me/scale_teams`).

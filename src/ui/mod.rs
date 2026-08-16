@@ -82,9 +82,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         .data()
         .and_then(|me| me.login.clone())
         .unwrap_or_default();
-    let level = app.dash.main_cursus().and_then(|cursus| cursus.level);
-    let identity = match level {
-        Some(level) => format!("{login} · {:.2}   ", level),
+    let identity = match app.dash.main_cursus() {
+        Some(cursus) => format!(
+            "{login} · L{} {}%   ",
+            cursus.level.unwrap_or_default() as u32,
+            cursus.progress.unwrap_or_default()
+        ),
         None => format!("{login}   "),
     };
     spans.push(Span::styled(identity, theme::text()));
@@ -109,28 +112,22 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         .dash
         .notifications
         .data()
-        .map(|notifications| notifications.len())
+        .map(|notifications| notifications.unread)
         .unwrap_or(0);
     if unread > 0 {
         spans.push(Span::styled(format!(" ✉ {unread} "), theme::warn()));
     }
     let hints = match app.tab {
-        Tab::Dashboard => "1-6 tabs · n notifications · ? help",
-        Tab::Projects => "/ filter · ←→ segment · Enter details · d download",
-        Tab::Slots => "o/h mode · ←→ project · Enter book · f form · s sync",
+        Tab::Dashboard => "F1-F6 tabs · n notifications · ? help",
+        Tab::Projects => "/ filter · ←→ segment · Tab pane · d download",
+        Tab::Slots => "p/o mode · ←→ project · Enter book · Tab form · s sync",
         Tab::Search => "type to search · Enter open profile",
         Tab::User => "Esc back to search",
         Tab::Clusters => "↑↓ cluster",
     };
     let mut line = Line::from(spans);
-    line.spans.push(Span::styled(
-        format!(
-            "{hints:>width$}",
-            hints = hints,
-            width = (area.width as usize).min(hints.len() + 2)
-        ),
-        theme::muted(),
-    ));
+    line.spans
+        .push(Span::styled(format!("  {hints}"), theme::muted()));
     frame.render_widget(line, area);
 }
 
@@ -145,13 +142,21 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(block, popup);
 
     match &app.dash.notifications {
-        Loadable::Ready(notifications) => {
-            let items: Vec<ListItem> = notifications
+        Loadable::Ready(payload) => {
+            let unread_seen = payload.unread;
+            let items: Vec<ListItem> = payload
+                .items
                 .iter()
                 .take(inner.height as usize)
-                .map(|notification| {
-                    let text = notification_text(notification);
-                    ListItem::new(Line::from(Span::styled(text, theme::text())))
+                .enumerate()
+                .map(|(index, notification)| {
+                    let text = notification_text(notification, index < unread_seen);
+                    let style = if index < unread_seen {
+                        theme::bright()
+                    } else {
+                        theme::text()
+                    };
+                    ListItem::new(Line::from(Span::styled(text, style)))
                 })
                 .collect();
             if items.is_empty() {
@@ -175,26 +180,18 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-/// Flatten a notification payload into one readable line.
-fn notification_text(notification: &crate::api::models::Notification) -> String {
-    let raw = &notification.raw;
-    let author = raw["author"]["login"]
-        .as_str()
-        .or_else(|| raw["from"]["login"].as_str())
-        .unwrap_or("intra");
-    let verb = raw["verb"].as_str().unwrap_or("notification");
-    let object = raw["data"]["name"]
-        .as_str()
-        .or_else(|| raw["data"]["project"]["name"].as_str())
-        .or_else(|| raw["data"]["title"].as_str())
-        .unwrap_or("");
+/// One readable line per notification: date, then title — text.
+fn notification_text(notification: &crate::api::models::Notification, unread: bool) -> String {
     let when = notification
         .created_at
         .as_deref()
         .and_then(util::parse_datetime)
         .map(|at| at.format("%d %b %H:%M").to_string())
         .unwrap_or_default();
-    format!("{when:<14}{author:<12} {verb} {object}")
+    let marker = if unread { "●" } else { " " };
+    let title = notification.title.clone().unwrap_or_default();
+    let text = notification.text.clone().unwrap_or_default();
+    format!("{marker} {when:<13}{title} — {text}")
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {

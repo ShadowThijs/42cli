@@ -216,7 +216,7 @@ async fn preload_dashboard(api: &Arc<Api>, tx: &Sender<Msg>, fresh: bool) {
         |api, (fresh, login)| async move { Msg::MyLogtime(api.locations_stats(&login, fresh).await) },
     );
     spawn_job(api, tx, (), |api, ()| async move {
-        Msg::MyNotifications(api.my_notifications(false).await)
+        Msg::MyNotifications(api.my_notifications().await)
     });
 
     // Fetches that need the numeric id wait for `me` first.

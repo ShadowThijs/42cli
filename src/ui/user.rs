@@ -83,9 +83,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         &app.user.logtime,
         app.tick,
         |frame, area, stats| {
-            let bars = util::logtime_bars(stats, 30);
             let month = util::logtime_last_days(stats, 30);
-            frame.render_widget(widgets::hours_chart(&bars), area);
+            frame.render_widget(widgets::logtime_sparkline(stats, 30), area);
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     format!("month {}", util::fmt_seconds(month)),
@@ -113,7 +112,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             let lines: Vec<Line> = cursus
                 .iter()
                 .map(|entry| {
-                    let (level, percent) = util::level_percent(entry.level.unwrap_or_default());
+                    let level = entry.level.unwrap_or_default() as u32;
+                    let percent = entry.progress.unwrap_or_default();
                     Line::from(vec![
                         Span::styled(
                             format!("{:<22}", entry.name.clone().unwrap_or_default()),

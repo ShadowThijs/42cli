@@ -15,7 +15,8 @@ use crate::input::Action;
 use crate::state::Loadable;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let centered = center(area, 46, 12);
+    // 4 title + 3 username + 3 password + 3 status + 3 gaps = 16 rows.
+    let centered = center(area, 46, 16);
     let chunks = Layout::vertical([
         Constraint::Length(4),
         Constraint::Length(3),

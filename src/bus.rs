@@ -93,7 +93,7 @@ pub enum Msg {
     MyCursus(Result<Vec<Cursus>, ApiError>),
     MyCampus(Result<Vec<Campus>, ApiError>),
     MyEvents(Result<Vec<IntraEvent>, ApiError>),
-    MyNotifications(Result<Vec<Notification>, ApiError>),
+    MyNotifications(Result<NotificationsPayload, ApiError>),
     MyScaleTeams(Result<Vec<ScaleTeam>, ApiError>),
     MyLogtime(Result<LocationStats, ApiError>),
     MyPace(Result<PaceProfile, ApiError>),

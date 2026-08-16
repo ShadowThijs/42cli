@@ -1,5 +1,5 @@
-//! Global key routing: overlays first, then screen-specific handlers that
-//! live next to their rendering code in `ui/`.
+//! Global key routing: overlays first, then F-key tab switching, then
+//! screen-specific handlers that live next to their rendering code.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -36,13 +36,21 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return ui::login::handle_key(app, key);
     }
 
+    // Function keys switch tabs from anywhere — including while typing.
+    if let KeyCode::F(index) = key.code
+        && (1..=Tab::ORDER.len() as u8).contains(&index)
+    {
+        app.enter_tab(Tab::from_index(index as usize - 1));
+        return Action::Continue;
+    }
+
     // Global keys (never while typing in an input field).
     if !text_input_active(app) {
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) | (KeyCode::Char('q'), _) => {
                 return Action::Quit;
             }
-            (KeyCode::Char('?') | KeyCode::Char('h'), _) => {
+            (KeyCode::Char('?'), _) => {
                 app.help_open = true;
                 return Action::Continue;
             }
@@ -56,18 +64,6 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
             (KeyCode::Char('r'), _) => {
                 refresh_current_tab(app);
-                return Action::Continue;
-            }
-            (KeyCode::Tab, _) => {
-                app.next_tab();
-                return Action::Continue;
-            }
-            (KeyCode::BackTab, _) => {
-                app.prev_tab();
-                return Action::Continue;
-            }
-            (KeyCode::Char(digit @ '1'..='6'), _) => {
-                app.enter_tab(Tab::from_index(digit as usize - '1' as usize));
                 return Action::Continue;
             }
             _ => {}

@@ -45,13 +45,6 @@ impl Tab {
     pub fn from_index(index: usize) -> Tab {
         Tab::ORDER[index.min(Tab::ORDER.len() - 1)]
     }
-
-    pub fn index(self) -> usize {
-        Tab::ORDER
-            .iter()
-            .position(|tab| *tab == self)
-            .unwrap_or_default()
-    }
 }
 
 pub struct App {
@@ -144,16 +137,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    pub fn next_tab(&mut self) {
-        let index = (self.tab.index() + 1) % Tab::ORDER.len();
-        self.enter_tab(Tab::from_index(index));
-    }
-
-    pub fn prev_tab(&mut self) {
-        let index = (self.tab.index() + Tab::ORDER.len() - 1) % Tab::ORDER.len();
-        self.enter_tab(Tab::from_index(index));
     }
 
     /// Open another student's profile (from search).

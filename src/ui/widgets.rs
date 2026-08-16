@@ -1,11 +1,11 @@
 //! Shared widgets: loadable panes, spinners, input fields, key-value rows,
-//! gauges and bar charts.
+//! gauges and the logtime chart.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{BarChart, Block, Gauge, Paragraph};
+use ratatui::widgets::{Block, Gauge, Paragraph, Sparkline};
 use tui_input::Input;
 
 use super::theme;
@@ -124,19 +124,20 @@ pub fn mini_gauge(
     frame.render_widget(gauge, area);
 }
 
-/// Bar chart of daily hours.
-pub fn hours_chart(bars: &[(String, f64)]) -> BarChart<'_> {
-    let data: Vec<(&str, u64)> = bars
+/// Compact logtime chart: one bar per day, quarter-hour steps, scaled
+/// against a 10-hour day.
+pub fn logtime_sparkline(
+    stats: &crate::api::models::LocationStats,
+    days: u32,
+) -> Sparkline<'static> {
+    let data: Vec<u64> = crate::util::logtime_bars(stats, days)
         .iter()
-        .map(|(label, hours)| (label.as_str(), hours.round() as u64))
+        .map(|(_, hours)| (hours * 4.0).round() as u64)
         .collect();
-    BarChart::default()
-        .data(data.as_slice())
-        .bar_style(Style::default().fg(theme::ACCENT))
-        .value_style(Style::default().fg(theme::BRIGHT))
-        .bar_width(1)
-        .bar_gap(0)
-        .max(10)
+    Sparkline::default()
+        .data(data)
+        .max(40)
+        .style(Style::default().fg(theme::ACCENT))
 }
 
 /// Standard pane block with title.

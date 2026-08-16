@@ -17,12 +17,28 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .spacing(1)
         .split(area);
 
-    let rows = app.clusters.rows();
+    // Only the user's primary campus — clusters.json spans every campus
+    // and their cluster names collide (a1/a2 exist on both).
+    let campus = app
+        .dash
+        .campuses
+        .data()
+        .and_then(|campuses| campuses.iter().find(|campus| campus.is_primary))
+        .map(|campus| (campus.id, campus.name.clone().unwrap_or_default()));
+    let (campus_id, campus_name) = match campus {
+        Some((id, name)) => (id, name),
+        None => (None, "all campuses".to_owned()),
+    };
+    let rows = app.clusters.rows(campus_id);
     let total: usize = rows.iter().map(|row| row.seats.len()).sum();
 
     // Cluster list.
     let block = widgets::titled_block(" clusters ", false).title(
-        Span::styled(format!(" {total} occupied "), theme::muted()).into_right_aligned_line(),
+        Span::styled(
+            format!(" {total} occupied · {campus_name} "),
+            theme::muted(),
+        )
+        .into_right_aligned_line(),
     );
     let inner = block.inner(columns[0]);
     frame.render_widget(block, columns[0]);
@@ -55,6 +71,21 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     if items.is_empty() {
         widgets::hint(frame, inner, "nobody logged in");
         return;
+    }
+    if let Some(last) = inner.rows().next_back() {
+        // Footnote: the API only reports occupied seats, so empty clusters
+        // (and empty campuses) never appear.
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "occupied only — empty clusters hidden",
+                theme::muted(),
+            ))),
+            Rect {
+                y: last.y,
+                height: 1,
+                ..inner
+            },
+        );
     }
     let mut state = ListState::default();
     state.select(Some(
@@ -102,7 +133,13 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
-    let count = app.clusters.rows().len();
+    let campus_id = app
+        .dash
+        .campuses
+        .data()
+        .and_then(|campuses| campuses.iter().find(|campus| campus.is_primary))
+        .and_then(|campus| campus.id);
+    let count = app.clusters.rows(campus_id).len();
     if count == 0 {
         return Action::Continue;
     }
