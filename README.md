@@ -8,15 +8,6 @@ students, wired straight into the same endpoints the web UIs use
 cargo run --release
 ```
 
-First launch asks for your intranet login + password and performs the
-full headless OAuth dance:
-
-```
-auth.42.fr (Keycloak, PKCE)  ─▶ bearer tokens for the intrapy API
-   └▶ SSO cookie  ─▶ intra.42.fr Rails session (projects, search, clusters)
-                      └▶ api.intra.42.fr OAuth  ─▶ slots.42belgium.be session
-```
-
 Sessions (tokens + cookies) are cached in `~/.config/42cli/session.json`
 (`0600`) and restored on next start — the refresh token lasts ~30 days.
 
@@ -83,6 +74,3 @@ src/ui/     one module per screen + theme/widgets
 src/bus.rs  command/msg bridge between the sync TUI loop and async workers
 src/worker.rs  fan-out dispatch on the tokio runtime
 ```
-
-Files stay under 400 lines; every user-facing payload is an `Option`-tolerant
-serde model so upstream shape drift degrades gracefully instead of panicking.
