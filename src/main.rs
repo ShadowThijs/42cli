@@ -14,6 +14,9 @@ mod ui;
 mod util;
 mod worker;
 
+#[cfg(test)]
+mod tests_live;
+
 use std::sync::Arc;
 
 use anyhow::Result;

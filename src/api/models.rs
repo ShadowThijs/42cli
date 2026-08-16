@@ -228,8 +228,16 @@ pub struct ProjectDataEntry {
     pub duration: Option<String>,
     pub rules: Option<String>,
     pub description: Option<String>,
+    /// Incoming graph edges (parent project + bezier control points).
     #[serde(default)]
-    pub by: Vec<u32>,
+    pub by: Vec<ProjectEdge>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectEdge {
+    pub parent_id: Option<u32>,
+    #[serde(flatten)]
+    pub extra: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

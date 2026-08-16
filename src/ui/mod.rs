@@ -6,6 +6,7 @@ pub mod help;
 pub mod login;
 pub mod projects;
 pub mod search;
+pub mod slot_form;
 pub mod slots;
 pub mod theme;
 pub mod user;
