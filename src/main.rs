@@ -17,11 +17,30 @@ mod worker;
 #[cfg(test)]
 mod tests_live;
 
+use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 fn main() -> Result<()> {
+    // Subcommands that run without the TUI.
+    match std::env::args().nth(1).as_deref() {
+        Some("install") => return install_userwide(),
+        Some("help") | Some("--help") | Some("-h") => {
+            println!("42cli — Ratatui client for the 42 intranet and 42 Belgium slots");
+            println!();
+            println!("Usage: cli42 [install]");
+            println!();
+            println!("  (no args)   start the TUI");
+            println!("  install     copy this binary to ~/.local/bin and check PATH");
+            return Ok(());
+        }
+        Some(other) => {
+            anyhow::bail!("unknown subcommand `{other}` — try `cli42 help`");
+        }
+        None => {}
+    }
+
     let cookies = restore_cookies();
     let api = Arc::new(api::Api::new(cookies.clone(), None)?);
     let (cmd_tx, msg_rx, worker) = bus::spawn_worker(api);
