@@ -155,7 +155,9 @@ impl App {
                 self.slots.projects.start();
                 self.slots.open.start();
                 self.slots.reserved.start();
-                self.send(Command::LoadSlotsOverview);
+                self.send(Command::LoadSlotsOverview {
+                    anchor: self.slots.week_anchor,
+                });
             }
             _ => {}
         }
@@ -188,5 +190,7 @@ impl App {
         self.clusters = ClustersState::default();
         self.loaded = LoadedFlags::default();
         self.notifications_open = false;
+        self.notifications_sel = 0;
+        self.event_popup = None;
     }
 }

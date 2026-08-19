@@ -249,10 +249,20 @@ fn refresh_current_tab(app: &mut App) {
         Tab::Dashboard => app.send(crate::bus::Command::LoadDashboard { fresh: true }),
         Tab::Projects => app.send(crate::bus::Command::LoadProjects { fresh: true }),
         Tab::Clusters => app.send(crate::bus::Command::LoadClusters { fresh: true }),
-        Tab::Slots => app.send(crate::bus::Command::LoadSlotsOverview),
-        Tab::User => app.send(crate::bus::Command::LoadUser {
-            login: app.user.login.clone(),
+        Tab::Slots => app.send(crate::bus::Command::LoadSlotsOverview {
+            anchor: app.slots.week_anchor,
         }),
+        Tab::User => {
+            // Without an opened profile there is nothing to reload — asking
+            // the API for an empty login would just error every pane.
+            if app.user.login.is_empty() {
+                app.set_status("search a user first (F4)");
+            } else {
+                app.send(crate::bus::Command::LoadUser {
+                    login: app.user.login.clone(),
+                });
+            }
+        }
         Tab::Search => app.set_status("search refreshes as you type"),
     }
 }

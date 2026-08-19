@@ -118,8 +118,13 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::SlotsSynced(result));
         }
 
-        Command::LoadProjectSlots { ps_id } => {
-            let result = api.project_slots(ps_id, 21).await;
+        Command::LoadProjectSlots {
+            ps_id,
+            anchor,
+            campus,
+            remote,
+        } => {
+            let result = api.project_slots(ps_id, anchor, 21, &campus, remote).await;
             let _ = tx.send(Msg::ProjectSlots(result));
         }
 
@@ -130,12 +135,12 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             remote,
         } => {
             let result = api.create_open_slot(begin, end, &campus, remote).await;
-            refresh_open(&api, &tx, result).await;
+            let _ = tx.send(Msg::SlotWrite(result));
         }
 
         Command::DeleteSlot { start, end } => {
             let result = api.delete_open_slot(start, end).await;
-            refresh_open(&api, &tx, result).await;
+            let _ = tx.send(Msg::SlotWrite(result));
         }
 
         Command::BookSlot {
@@ -144,16 +149,7 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             campus,
         } => {
             let result = api.book_project_slot(ps_id, &time, &campus).await;
-            refresh_reserved(&api, &tx, result).await;
-        }
-
-        Command::CancelSlot {
-            ps_id,
-            time,
-            campus,
-        } => {
-            let result = api.cancel_project_slot(ps_id, &time, &campus).await;
-            refresh_reserved(&api, &tx, result).await;
+            let _ = tx.send(Msg::SlotWrite(result));
         }
     }
 }
@@ -171,22 +167,6 @@ where
         let msg = job(api, ctx).await;
         let _ = tx.send(msg);
     });
-}
-
-async fn refresh_open(api: &Arc<Api>, tx: &Sender<Msg>, result: Result<(), ApiError>) {
-    if result.is_ok() {
-        let open = api.open_slots(21).await;
-        let _ = tx.send(Msg::OpenSlots(open));
-    }
-    let _ = tx.send(Msg::SlotWrite(result));
-}
-
-async fn refresh_reserved(api: &Arc<Api>, tx: &Sender<Msg>, result: Result<(), ApiError>) {
-    if result.is_ok() {
-        let reserved = api.reserved_slots(21).await;
-        let _ = tx.send(Msg::ReservedSlots(reserved));
-    }
-    let _ = tx.send(Msg::SlotWrite(result));
 }
 
 /// Rehydrate a persisted session (tokens + cookies) and verify it.

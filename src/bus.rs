@@ -94,11 +94,6 @@ pub enum Command {
         time: String,
         campus: String,
     },
-    CancelSlot {
-        ps_id: u32,
-        time: String,
-        campus: String,
-    },
 }
 
 /// Every asynchronous answer the UI can receive.

@@ -6,16 +6,16 @@ pub mod help;
 pub mod login;
 pub mod projects;
 pub mod search;
-pub mod slot_form;
 pub mod slots;
 pub mod theme;
 pub mod user;
+pub mod week_grid;
 pub mod widgets;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 use crate::app::{App, Screen, Tab};
 use crate::state::Loadable;
@@ -149,10 +149,10 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
     match &app.dash.notifications {
         Loadable::Ready(payload) => {
             let unread_seen = payload.unread;
+            let width = inner.width as usize;
             let items: Vec<ListItem> = payload
                 .items
                 .iter()
-                .take(inner.height as usize)
                 .enumerate()
                 .map(|(index, notification)| {
                     let text = notification_text(notification, index < unread_seen);

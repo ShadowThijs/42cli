@@ -161,17 +161,7 @@ pub enum SlotsMode {
     Hours,
 }
 
-#[derive(Debug, Default)]
-pub struct SlotForm {
-    pub date: Input,
-    pub start: Input,
-    pub end: Input,
-    pub campus_bx: bool,
-    pub remote: bool,
-    pub focus: u8,
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SlotsState {
     pub mode: Option<SlotsMode>,
     pub open: Loadable<Vec<Slot>>,
@@ -179,18 +169,52 @@ pub struct SlotsState {
     pub projects: Loadable<Vec<SlotsProject>>,
     pub project_slots: Loadable<Vec<Slot>>,
     pub project_sel: usize,
-    pub slot_sel: usize,
-    pub open_sel: usize,
-    pub reserved_sel: usize,
-    pub form: SlotForm,
     pub focus: SlotsFocus,
+    /// Any date inside the week the calendar shows (snapped to its Monday).
+    pub week_anchor: chrono::NaiveDate,
+    /// Calendar cursor: (weekday 0..6, half-hour row).
+    pub cursor: (usize, usize),
+    /// First cell of an open-hour range being dragged out.
+    pub range_start: Option<(usize, usize)>,
+    /// New open hours go to the toggled campus; `t` flips inter-campus.
+    pub campus_bx: bool,
+    pub remote: bool,
+    /// First visible half-hour row. The calendar measures its viewport
+    /// while rendering (draw only sees `&App`), so both scroll fields are
+    /// plain cells the UI thread mutates single-handedly.
+    pub grid_scroll: std::cell::Cell<u16>,
+    /// Visible row count of the last render, for key-side scrolling.
+    pub grid_view: std::cell::Cell<u16>,
+}
+
+impl Default for SlotsState {
+    fn default() -> Self {
+        Self {
+            mode: None,
+            open: Loadable::default(),
+            reserved: Loadable::default(),
+            projects: Loadable::default(),
+            project_slots: Loadable::default(),
+            project_sel: 0,
+            focus: SlotsFocus::Strip,
+            week_anchor: chrono::Local::now().date_naive(),
+            cursor: (0, 0),
+            range_start: None,
+            campus_bx: false,
+            remote: false,
+            grid_scroll: std::cell::Cell::new(0),
+            grid_view: std::cell::Cell::new(0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SlotsFocus {
+    /// The horizontal bookable-projects strip.
+    Strip,
+    /// The week calendar itself.
     #[default]
-    List,
-    Form,
+    Grid,
 }
 
 impl SlotsState {
@@ -266,6 +290,7 @@ impl ClustersState {
                     .filter(|prefix| !prefix.is_empty())
                     .unwrap_or("other")
                     .to_owned();
+                let cluster = cluster_display_name(seat.campus_id, &cluster);
                 clusters.entry(cluster).or_default().push(seat);
             }
         }
@@ -278,5 +303,21 @@ impl ClustersState {
             .collect();
         rows.sort_by(|a, b| b.seats.len().cmp(&a.seats.len()).then(a.name.cmp(&b.name)));
         rows
+    }
+}
+
+/// Translate a hostname prefix into the cluster name used on campus.
+///
+/// Brussels (campus 12) hostnames are off by one versus the physical
+/// signage: the rooms signed a1/a2 carry machines named a2-*/a3-*.
+fn cluster_display_name(campus_id: Option<u32>, prefix: &str) -> String {
+    if campus_id == Some(12) {
+        match prefix {
+            "a2" => "a1".to_owned(),
+            "a3" => "a2".to_owned(),
+            other => other.to_owned(),
+        }
+    } else {
+        prefix.to_owned()
     }
 }

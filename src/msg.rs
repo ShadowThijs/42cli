@@ -165,26 +165,47 @@ impl App {
                 Err(error) => self.set_status(format!("sync failed: {error}")),
             },
             Msg::OpenSlots(result) => {
-                self.slots.open_sel = 0;
                 self.slots.open.set(result);
             }
             Msg::ReservedSlots(result) => {
-                self.slots.reserved_sel = 0;
                 self.slots.reserved.set(result);
             }
             Msg::ProjectSlots(result) => {
-                self.slots.slot_sel = 0;
                 self.slots.project_slots.set(result);
             }
             Msg::SlotWrite(result) => match result {
-                Ok(()) => self.set_status("done"),
+                Ok(()) => {
+                    self.set_status("done");
+                    self.slots_reload();
+                }
                 Err(error) => self.set_status(format!("slots: {error}")),
             },
         }
     }
 
-    /// Mark every slot-related list as stale (used when switching modes).
+    /// Refetch everything for the week the calendar currently shows.
     pub fn slots_reload(&mut self) {
-        self.send(crate::bus::Command::LoadSlotsOverview);
+        self.send(crate::bus::Command::LoadSlotsOverview {
+            anchor: self.slots.week_anchor,
+        });
+        self.reload_project_slots();
+    }
+
+    /// Refetch the selected project's slots with the current campus /
+    /// inter-campus filters (what the site's booking calendar shows).
+    pub fn reload_project_slots(&mut self) {
+        if let Some(ps_id) = self.slots.selected_project().and_then(|project| project.id) {
+            self.slots.project_slots = crate::state::Loadable::Loading;
+            self.send(crate::bus::Command::LoadProjectSlots {
+                ps_id,
+                anchor: self.slots.week_anchor,
+                campus: if self.slots.campus_bx {
+                    "bx".into()
+                } else {
+                    "anr".into()
+                },
+                remote: self.slots.remote,
+            });
+        }
     }
 }

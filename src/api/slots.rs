@@ -1,6 +1,6 @@
 //! `slots.42belgium.be` — open-hour slots and project slot booking.
 
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Datelike, Local, TimeZone};
 use serde_json::Value;
 
 use super::{Api, ApiError, ApiResult, Slot};
@@ -10,14 +10,6 @@ pub const CAMPUS_BX: &str = "bx";
 pub const CAMPUS_ANR: &str = "anr";
 
 /// Slot feed names accepted by the API.
-pub const STATUS_FEEDS: &[&str] = &[
-    "bx",
-    "anr",
-    "remote-bx",
-    "remote-anr",
-    "anr-local",
-    "bx-local",
-];
 pub const RESERVED_FEEDS: &[&str] = &["reserved-bx", "reserved-anr"];
 
 impl Api {
@@ -107,6 +99,25 @@ impl Api {
         }
     }
 
+    /// Raw feed JSON — live-test helper to inspect undocumented fields.
+    #[cfg(test)]
+    pub async fn slots_feed_raw(&self, path: &str, params: &[(&str, String)]) -> ApiResult<String> {
+        self.ensure_slots_session().await?;
+        let url = format!("{}/{path}", super::SLOTS_BASE);
+        let resp = self
+            .http
+            .get(&url)
+            .query(params)
+            .headers(self.slots_headers()?)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ApiError::from_response("slots", resp).await);
+        }
+        Ok(resp.text().await.unwrap_or_default())
+    }
+
     /// Projects the user may book slots for.
     pub async fn slots_projects(&self) -> ApiResult<Vec<super::SlotsProject>> {
         self.ensure_slots_session().await?;
@@ -132,9 +143,10 @@ impl Api {
             .await
     }
 
-    /// My open-hour slots at both campuses for the next `days` days.
-    pub async fn open_slots(&self, days: i64) -> ApiResult<Vec<Slot>> {
-        let (start, end) = range_for(days);
+    /// My open-hour slots at both campuses for the `days` days starting at
+    /// `anchor`'s Monday (the calendar's fetch window).
+    pub async fn open_slots(&self, anchor: chrono::NaiveDate, days: i64) -> ApiResult<Vec<Slot>> {
+        let (start, end) = range_for(anchor, days);
         let mut all = Vec::new();
         for status in [CAMPUS_BX, CAMPUS_ANR] {
             let mut slots = self
@@ -159,9 +171,14 @@ impl Api {
         Ok(all)
     }
 
-    /// My project-slot reservations for the next `days` days.
-    pub async fn reserved_slots(&self, days: i64) -> ApiResult<Vec<Slot>> {
-        let (start, end) = range_for(days);
+    /// My project-slot reservations for the `days` days starting at
+    /// `anchor`'s Monday.
+    pub async fn reserved_slots(
+        &self,
+        anchor: chrono::NaiveDate,
+        days: i64,
+    ) -> ApiResult<Vec<Slot>> {
+        let (start, end) = range_for(anchor, days);
         let mut all = Vec::new();
         for status in RESERVED_FEEDS {
             let mut slots = self
@@ -176,6 +193,7 @@ impl Api {
                 .await?;
             for slot in &mut slots {
                 slot.feed = status.to_string();
+                slot.reserved = true;
                 if slot.campus.is_none() {
                     slot.campus = Some(status.trim_start_matches("reserved-").to_string());
                 }
@@ -221,12 +239,34 @@ impl Api {
         .await
     }
 
-    /// Slots for a project session: bookable ones plus the user's own
-    /// reservations (marked `reserved` so the UI can offer cancel).
-    pub async fn project_slots(&self, ps_id: u32, days: i64) -> ApiResult<Vec<Slot>> {
-        let (start, end) = range_for(days);
+    /// Slots for a project session, filtered exactly like the site's
+    /// booking calendar: your campus's local feed, the other campus's
+    /// remote feed when inter-campus is on, plus your own reservations.
+    pub async fn project_slots(
+        &self,
+        ps_id: u32,
+        anchor: chrono::NaiveDate,
+        days: i64,
+        campus: &str,
+        remote: bool,
+    ) -> ApiResult<Vec<Slot>> {
+        let (start, end) = range_for(anchor, days);
+        let local = format!("{}-local", campus);
+        let other_remote = format!(
+            "remote-{}",
+            if campus == CAMPUS_BX {
+                CAMPUS_ANR
+            } else {
+                CAMPUS_BX
+            }
+        );
+        let mut feeds: Vec<String> = vec![local];
+        if remote {
+            feeds.push(other_remote);
+        }
+        feeds.extend(RESERVED_FEEDS.iter().map(|feed| feed.to_string()));
         let mut all = Vec::new();
-        for status in STATUS_FEEDS.iter().chain(RESERVED_FEEDS) {
+        for status in feeds {
             if let Ok(mut slots) = self
                 .slots_feed(
                     &format!("api/project_slots/{ps_id}"),
@@ -260,16 +300,6 @@ impl Api {
         )
         .await
     }
-
-    /// Cancel a project slot reservation.
-    pub async fn cancel_project_slot(&self, ps_id: u32, time: &str, campus: &str) -> ApiResult<()> {
-        self.slots_write(
-            reqwest::Method::DELETE,
-            &format!("api/project_slots/{ps_id}"),
-            &[("time", time.to_string()), ("campus", campus.to_string())],
-        )
-        .await
-    }
 }
 
 /// RFC 3339 with local offset, e.g. `2026-08-16T23:00:00+02:00` — the exact
@@ -278,16 +308,17 @@ fn rfc3339_local(at: DateTime<Local>) -> String {
     at.format("%Y-%m-%dT%H:%M:%S%:z").to_string()
 }
 
-/// `[start, end]` range strings covering today .. today + `days`.
-fn range_for(days: i64) -> (String, String) {
-    let today = Local::now().date_naive();
+/// `[start, end]` range strings covering the Monday of `anchor`'s week ..
+/// that + `days` — the window the displayed calendar needs.
+fn range_for(anchor: chrono::NaiveDate, days: i64) -> (String, String) {
+    let monday = anchor - chrono::Duration::days(anchor.weekday().num_days_from_monday() as i64);
     let to_local_midnight = |date: chrono::NaiveDate| {
         date.and_hms_opt(0, 0, 0)
             .and_then(|naive| Local.from_local_datetime(&naive).single())
             .unwrap_or_else(Local::now)
     };
-    let begin = to_local_midnight(today);
-    let end = to_local_midnight(today + chrono::Duration::try_days(days).unwrap_or_default());
+    let begin = to_local_midnight(monday);
+    let end = to_local_midnight(monday + chrono::Duration::try_days(days).unwrap_or_default());
     (rfc3339_local(begin), rfc3339_local(end))
 }
 
