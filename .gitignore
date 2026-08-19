@@ -1,3 +1,6 @@
 .omc
 
 target/
+
+# Local-only reference material (intra frontend bundle + notes)
+docs/
