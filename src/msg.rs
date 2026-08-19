@@ -85,6 +85,16 @@ impl App {
                     Err(error) => self.set_status(format!("download failed: {error}")),
                 }
             }
+            Msg::CloneDone { slug, path, result } => {
+                self.projects.cloning.retain(|s| s != &slug);
+                match result {
+                    Ok(_) => {
+                        self.set_status(format!("cloned into {path}"));
+                        self.projects.editor_prompt = Some(path);
+                    }
+                    Err(error) => self.set_status(format!("clone failed: {error}")),
+                }
+            }
 
             // -------------------------------------------- search / user ----
             Msg::SearchResults(result) => {

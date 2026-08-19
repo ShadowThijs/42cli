@@ -69,3 +69,34 @@ pub fn save_session(session: &StoredSession) -> Result<()> {
 pub fn clear_session() {
     let _ = fs::remove_file(session_path());
 }
+
+/// User preferences that survive restarts (unlike the session, these are
+/// not secret): `~/.config/42cli/settings.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Settings {
+    /// Last used `g` clone destination directory.
+    pub clone_dest: Option<String>,
+}
+
+fn settings_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("42cli")
+        .join("settings.json")
+}
+
+pub fn load_settings() -> Settings {
+    fs::read(settings_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_settings(settings: &Settings) -> Result<()> {
+    let path = settings_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("create config dir")?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(settings)?).context("write settings file")?;
+    Ok(())
+}

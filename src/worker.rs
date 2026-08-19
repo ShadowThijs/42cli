@@ -50,6 +50,20 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::DownloadDone { name, result });
         }
 
+        Command::CloneRepo {
+            slug,
+            repo,
+            dest,
+            name,
+        } => {
+            let result = git_clone(&repo, &dest, name.as_deref()).await;
+            let path = match &result {
+                Ok(path) => path.clone(),
+                Err(_) => dest,
+            };
+            let _ = tx.send(Msg::CloneDone { slug, path, result });
+        }
+
         Command::Search { query } => {
             let result = api.search_users(&query).await;
             let _ = tx.send(Msg::SearchResults(result));
@@ -365,4 +379,56 @@ async fn marked_of(api: &Arc<Api>) -> Result<Vec<MarkedProject>, ApiError> {
         return Ok(Vec::new());
     }
     api.marked_projects(&login, 21).await
+}
+
+/// `git clone` into `dest`, optionally under an explicit folder name —
+/// without one git picks the repo's own name, exactly like on the command
+/// line. Returns the resulting folder. Vogsphere needs the campus network +
+/// SSH key, so failures surface as the last lines of git's output instead
+/// of a raw io error.
+async fn git_clone(repo: &str, dest: &str, name: Option<&str>) -> Result<String, String> {
+    std::fs::create_dir_all(dest).map_err(|error| format!("cannot create {dest}: {error}"))?;
+    let mut command = tokio::process::Command::new("git");
+    command.arg("clone").arg(repo).current_dir(dest);
+    if let Some(name) = name {
+        command.arg(name);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|error| format!("cannot run git: {error}"))?;
+    if output.status.success() {
+        let folder = name
+            .map(str::to_owned)
+            .unwrap_or_else(|| repo_default_folder(repo));
+        return Ok(std::path::Path::new(dest)
+            .join(folder)
+            .display()
+            .to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let tail: Vec<&str> = stderr.lines().filter(|line| !line.is_empty()).collect();
+    let tail = tail
+        .iter()
+        .rev()
+        .take(3)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    Err(if tail.is_empty() {
+        format!("git exited with {}", output.status)
+    } else {
+        tail
+    })
+}
+
+/// git's default folder: the basename of an URL or SCP-style path, with a
+/// trailing `.git` stripped — `git@host:x/y/name.git` -> `name`.
+fn repo_default_folder(repo: &str) -> String {
+    repo.rsplit(['/', ':'])
+        .next()
+        .unwrap_or(repo)
+        .trim_end_matches(".git")
+        .to_owned()
 }

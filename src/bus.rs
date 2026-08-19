@@ -39,6 +39,14 @@ pub enum Command {
         name: String,
         url: String,
     },
+    CloneRepo {
+        slug: String,
+        repo: String,
+        /// Working directory for the clone (created if missing).
+        dest: String,
+        /// Target folder name; `None` = git's default (repo name).
+        name: Option<String>,
+    },
     // User search / profile view.
     Search {
         query: String,
@@ -125,6 +133,11 @@ pub enum Msg {
     DownloadDone {
         name: String,
         result: Result<String, ApiError>,
+    },
+    CloneDone {
+        slug: String,
+        path: String,
+        result: Result<String, String>,
     },
 
     SearchResults(Result<Vec<SearchResult>, ApiError>),

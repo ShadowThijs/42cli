@@ -72,9 +72,14 @@ pub struct App {
     pub user: UserView,
     pub clusters: ClustersState,
     pub notifications_open: bool,
+    pub notifications_sel: usize,
+    pub event_popup: Option<crate::state::EventPopup>,
     pub help_open: bool,
     pub status: Option<(String, Instant)>,
     pub tick: u64,
+    /// Editor to launch once the event loop can suspend the TUI, with the
+    /// folder it should open (`<editor> .` from that directory).
+    pub pending_editor: Option<(String, String)>,
     cmd: CommandSink,
     /// Guards so background preloads fire at most once per session tab.
     pub loaded: LoadedFlags,
@@ -100,9 +105,12 @@ impl App {
             user: UserView::default(),
             clusters: ClustersState::default(),
             notifications_open: false,
+            notifications_sel: 0,
+            event_popup: None,
             help_open: false,
             status: None,
             tick: 0,
+            pending_editor: None,
             cmd,
             loaded: LoadedFlags::default(),
         }

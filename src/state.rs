@@ -128,7 +128,29 @@ pub struct ProjectsState {
     pub marked: Loadable<Vec<MarkedProject>>,
     pub mine: HashMap<String, Loadable<ProjectMine>>,
     pub downloading: HashMap<String, bool>,
+    /// Slugs with a `git clone` in flight (triggered with `g`).
+    pub cloning: Vec<String>,
+    /// Destination + folder-name prompt opened with `g`.
+    pub clone_prompt: Option<ClonePrompt>,
+    /// Folder of a just-finished clone, offered to an editor.
+    pub editor_prompt: Option<String>,
     pub focus_details: bool,
+    /// Slug to select once the graph data lands (notification jump made
+    /// before the projects tab ever loaded).
+    pub pending_focus: Option<String>,
+}
+
+/// The `g` popup: where should the project's git repo be cloned, and under
+/// what folder name.
+#[derive(Debug)]
+pub struct ClonePrompt {
+    pub slug: String,
+    pub repo: String,
+    pub dest: Input,
+    pub name: Input,
+    pub focus: u8,
+    /// Path candidates for the destination (Tab completion).
+    pub completions: Option<String>,
 }
 
 // ------------------------------------------------------------- slots ----

@@ -66,6 +66,13 @@ pub fn run(terminal: &mut Term, app: &mut App, messages: MsgStream) -> std::io::
                 return Ok(());
             }
         }
+
+        // 4. An editor chosen from the post-clone popup ends the session —
+        //    `main` exec()s it in the cloned folder once the TUI is torn
+        //    down, so quitting the editor lands back in the shell.
+        if app.pending_editor.is_some() {
+            return Ok(());
+        }
         app.tick = app.tick.wrapping_add(1);
     }
 }
