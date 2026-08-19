@@ -26,9 +26,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::Continue;
     }
     if app.notifications_open {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n')) {
-            app.notifications_open = false;
-        }
+        handle_notification_key(app, key);
+        return Action::Continue;
+    }
+    // The clone prompt is a proper overlay too — it must swallow F-keys and
+    // global shortcuts while destination / folder name are being typed.
+    if app.projects.clone_prompt.is_some() {
+        ui::projects::handle_clone_prompt_key(app, key);
+        return Action::Continue;
+    }
+    // So is the post-clone "open in editor?" popup.
+    if app.projects.editor_prompt.is_some() {
+        ui::projects::handle_editor_prompt_key(app, key);
         return Action::Continue;
     }
 
@@ -56,6 +65,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
             (KeyCode::Char('n'), _) => {
                 app.notifications_open = true;
+                app.notifications_sel = 0;
                 return Action::Continue;
             }
             (KeyCode::Char('L'), _) => {
@@ -80,13 +90,139 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
+/// Keys inside the notifications overlay: j/k walk the list, Enter follows
+/// the selected notification's link, the event popup replaces the list.
+fn handle_notification_key(app: &mut App, key: KeyEvent) {
+    if app.event_popup.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n') | KeyCode::Char('q') => {
+                app.event_popup = None;
+                app.notifications_open = false;
+            }
+            KeyCode::Char('s') => set_event_subscription(app, true),
+            KeyCode::Char('u') => set_event_subscription(app, false),
+            _ => {}
+        }
+        return;
+    }
+
+    let count = app
+        .dash
+        .notifications
+        .data()
+        .map(|payload| payload.items.len())
+        .unwrap_or(0);
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.notifications_sel = app.notifications_sel.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.notifications_sel = (app.notifications_sel + 1).min(count.saturating_sub(1));
+        }
+        KeyCode::Enter => open_selected_notification(app),
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+            app.notifications_open = false;
+        }
+        _ => {}
+    }
+}
+
+/// Follow the selected notification's `link`: events open the detail popup,
+/// project links jump to the project in the projects tab.
+fn open_selected_notification(app: &mut App) {
+    let Some(link) = app
+        .dash
+        .notifications
+        .data()
+        .and_then(|payload| payload.items.get(app.notifications_sel))
+        .and_then(|notification| notification.link.clone())
+    else {
+        return;
+    };
+
+    if let Some(id) = event_id_from_link(&link) {
+        app.event_popup = Some(crate::state::EventPopup {
+            event_id: id,
+            event: crate::state::Loadable::Loading,
+        });
+        app.send(crate::bus::Command::LoadEvent { id });
+        return;
+    }
+
+    if let Some(slug) = project_slug_from_link(&link) {
+        app.notifications_open = false;
+        app.event_popup = None;
+        app.enter_tab(Tab::Projects);
+        ui::projects::focus_project(app, &slug);
+        return;
+    }
+
+    app.notifications_open = false;
+    app.set_status(format!("no viewer for {link}"));
+}
+
+/// Fire the subscribe (`s`) / unsubscribe (`u`) action of the open event
+/// popup, replaying the footer form of the scraped event page.
+fn set_event_subscription(app: &mut App, subscribe: bool) {
+    let action = app.event_popup.as_ref().and_then(|popup| {
+        let crate::state::Loadable::Ready(event) = &popup.event else {
+            return None;
+        };
+        let url = if subscribe {
+            event.subscribe_url.clone()
+        } else {
+            event.unsubscribe_url.clone()
+        }?;
+        let csrf_token = event.csrf_token.clone()?;
+        Some((popup.event_id, url, csrf_token))
+    });
+    let Some((id, url, csrf_token)) = action else {
+        // No footer action on the page: past, full or closed event.
+        app.set_status(if subscribe {
+            "this event cannot be subscribed to"
+        } else {
+            "this event cannot be unsubscribed from"
+        });
+        return;
+    };
+    app.set_status(if subscribe {
+        "subscribing…"
+    } else {
+        "unsubscribing…"
+    });
+    app.send(crate::bus::Command::SetEventSubscription {
+        id,
+        url,
+        csrf_token,
+        subscribe,
+    });
+}
+
+/// `https://profile.intra.42.fr/events/43447` -> `43447`.
+fn event_id_from_link(link: &str) -> Option<u32> {
+    link.split("/events/")
+        .nth(1)?
+        .trim_end_matches('/')
+        .parse()
+        .ok()
+}
+
+/// `https://projects.intra.42.fr/projects/datomic/` -> `"datomic"`.
+fn project_slug_from_link(link: &str) -> Option<String> {
+    let slug = link.split("/projects/").nth(1)?.trim_end_matches('/');
+    if slug.is_empty() {
+        None
+    } else {
+        Some(slug.to_owned())
+    }
+}
+
 /// True when the current focus is a text field where typed characters must
 /// not be interpreted as global shortcuts.
 fn text_input_active(app: &App) -> bool {
     match app.tab {
         Tab::Search => true,
         Tab::Projects => app.projects.filter_focused,
-        Tab::Slots => app.slots.focus == crate::state::SlotsFocus::Form,
         _ => false,
     }
 }

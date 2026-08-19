@@ -46,15 +46,30 @@ pub enum Command {
     LoadUser {
         login: String,
     },
+    // Event detail popup opened from a notification link.
+    LoadEvent {
+        id: u32,
+    },
+    SetEventSubscription {
+        id: u32,
+        url: String,
+        csrf_token: String,
+        subscribe: bool,
+    },
     // Clusters.
     LoadClusters {
         fresh: bool,
     },
     // Slots.
-    LoadSlotsOverview,
+    LoadSlotsOverview {
+        anchor: chrono::NaiveDate,
+    },
     SyncSlotsProjects,
     LoadProjectSlots {
         ps_id: u32,
+        anchor: chrono::NaiveDate,
+        campus: String,
+        remote: bool,
     },
     CreateSlot {
         begin: chrono::DateTime<chrono::Local>,
@@ -136,6 +151,15 @@ pub enum Msg {
     },
 
     Clusters(Result<Vec<ClusterSeat>, ApiError>),
+
+    EventDetail {
+        id: u32,
+        result: Result<EventDetail, ApiError>,
+    },
+    EventWrite {
+        subscribe: bool,
+        result: Result<(), ApiError>,
+    },
 
     SlotsProjects(Result<Vec<SlotsProject>, ApiError>),
     SlotsSynced(Result<(), ApiError>),

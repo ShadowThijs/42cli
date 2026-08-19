@@ -154,6 +154,88 @@ impl Api {
             .map_err(|error| ApiError::Other(format!("write {}: {error}", path.display())))?;
         Ok(path.display().to_string())
     }
+
+    /// Scrape `profile.intra.42.fr/events/{id}` for the full event record.
+    pub async fn event_detail(&self, id: u32) -> ApiResult<super::EventDetail> {
+        let fetch = || async {
+            let resp = self
+                .http
+                .get(format!("{}/events/{id}", super::PROFILE_BASE))
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(ApiError::from_response("event", resp).await);
+            }
+            // A dead Rails session bounces to the signin page (HTTP 200).
+            if resp
+                .url()
+                .host_str()
+                .is_some_and(|host| host.contains("signin"))
+            {
+                return Err(ApiError::SessionExpired);
+            }
+            let html = resp.text().await.unwrap_or_default();
+            parse_event_detail(&html, id).ok_or_else(|| ApiError::Parse {
+                endpoint: "event",
+                detail: format!("could not parse event {id}"),
+            })
+        };
+        match fetch().await {
+            Ok(event) => Ok(event),
+            Err(ApiError::SessionExpired) => {
+                if super::auth::bootstrap_intra_session(self).await {
+                    fetch().await
+                } else {
+                    Err(ApiError::SessionExpired)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Subscribe (`subscribe = true`) or unsubscribe to an event by
+    /// replaying the rails-ujs form behind the page footer link: POST with
+    /// the page CSRF token, and `_method=delete` in the body to override
+    /// the verb for unsubscription.
+    pub async fn set_event_subscription(
+        &self,
+        url: &str,
+        csrf_token: &str,
+        subscribe: bool,
+    ) -> ApiResult<()> {
+        let send = || async {
+            let mut request = self.http.post(url).header("X-CSRF-Token", csrf_token);
+            if !subscribe {
+                request = request.form(&[("_method", "delete")]);
+            }
+            let resp = request.send().await?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(ApiError::from_response("event subscribe", resp).await);
+            }
+            // A dead Rails session bounces to the signin page (HTTP 200).
+            if resp
+                .url()
+                .host_str()
+                .is_some_and(|host| host.contains("signin"))
+            {
+                return Err(ApiError::SessionExpired);
+            }
+            Ok(())
+        };
+        match send().await {
+            Ok(()) => Ok(()),
+            Err(ApiError::SessionExpired) => {
+                if super::auth::bootstrap_intra_session(self).await {
+                    send().await
+                } else {
+                    Err(ApiError::SessionExpired)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
@@ -246,6 +328,128 @@ fn select_attr(document: &scraper::Html, selector: &str, attr: &str) -> Option<S
                 .and_then(|element| element.attr(attr))
         })
         .map(str::to_owned)
+}
+
+/// Parse the server-rendered event modal on `profile.intra.42.fr/events/{id}`.
+fn parse_event_detail(html: &str, id: u32) -> Option<super::EventDetail> {
+    use scraper::{ElementRef, Html, Selector};
+
+    let document = Html::parse_document(html);
+    let text_of = |selector: &str| {
+        Selector::parse(selector).ok().and_then(|selector| {
+            document
+                .select(&selector)
+                .next()
+                .map(|element| collapse_ws(&element.text().collect::<String>()))
+        })
+    };
+
+    let name = text_of(".event-modal header .head h4").filter(|name| !name.is_empty())?;
+    let kind = text_of(".event-modal header .head .kind");
+    let location = text_of(".event-modal .event-location");
+
+    // `<span data-long-date='2026-09-29 16:00:00 +0200'>`: first is the
+    // start, a second one (when present) is the end.
+    let mut dates = Vec::new();
+    if let Ok(selector) = Selector::parse(".event-modal span[data-long-date]") {
+        for element in document.select(&selector) {
+            if let Some(raw) = element.attr("data-long-date") {
+                dates.push(long_date_to_rfc3339(raw).unwrap_or_else(|| raw.to_owned()));
+            }
+        }
+    }
+    let (begin_at, end_at) = match dates.as_slice() {
+        [first] => (Some(first.clone()), None),
+        [first, second, ..] => (Some(first.clone()), Some(second.clone())),
+        [] => (None, None),
+    };
+
+    // Duration lives next to the clock icon, printed as "for 6 days".
+    let duration = Selector::parse(".event-modal .icon-clock")
+        .ok()
+        .and_then(|selector| document.select(&selector).next())
+        .and_then(|icon| ElementRef::wrap(icon.parent()?))
+        .map(|span| collapse_ws(&span.text().collect::<String>()))
+        .map(|text| {
+            text.strip_prefix("for ")
+                .unwrap_or(text.as_str())
+                .to_owned()
+        });
+
+    // Sign-ups render as a single "15 / 50" text.
+    let (current_subscribers, max_subscribers) = text_of(".event-modal .event-suscriptions")
+        .map(|text| {
+            let mut parts = text.split('/');
+            (
+                parts.next().and_then(|v| v.trim().parse().ok()),
+                parts.next().and_then(|v| v.trim().parse().ok()),
+            )
+        })
+        .unwrap_or((None, None));
+
+    // The subscribe button switches to data-method="delete" once signed up;
+    // the footer links are the rails-ujs forms we replay for s/u actions.
+    let subscribe_url = select_attr(
+        &document,
+        r#"a[data-method="post"][href*="events_users"]"#,
+        "href",
+    )
+    .map(|href| absolutize(&href));
+    let unsubscribe_url = select_attr(
+        &document,
+        r#"a[data-method="delete"][href*="events_users"]"#,
+        "href",
+    )
+    .map(|href| absolutize(&href));
+    let is_subscribed = unsubscribe_url.is_some();
+
+    // Full markdown description rides along in data-markdownable.
+    let description = select_attr(
+        &document,
+        ".event-modal .notification-text",
+        "data-markdownable",
+    )
+    .or_else(|| text_of(".event-modal .notification-text"));
+
+    let csrf_token = select_attr(&document, r#"meta[name="csrf-token"]"#, "content");
+
+    Some(super::EventDetail {
+        id,
+        name: Some(name),
+        kind,
+        begin_at,
+        end_at,
+        duration,
+        location,
+        description,
+        current_subscribers,
+        max_subscribers,
+        is_subscribed,
+        csrf_token,
+        subscribe_url,
+        unsubscribe_url,
+    })
+}
+
+/// Turn the page-relative footer href into an absolute URL.
+fn absolutize(href: &str) -> String {
+    if href.starts_with("http") {
+        href.to_owned()
+    } else {
+        format!("{}{href}", super::PROFILE_BASE)
+    }
+}
+
+/// Collapse runs of whitespace (HTML indentation) into single spaces.
+fn collapse_ws(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `2026-09-29 16:00:00 +0200` (data-long-date) -> RFC 3339.
+fn long_date_to_rfc3339(raw: &str) -> Option<String> {
+    chrono::DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S %z")
+        .map(|at| at.to_rfc3339())
+        .ok()
 }
 
 /// Percent-encode a query value without pulling in a whole crate for it.

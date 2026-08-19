@@ -62,7 +62,16 @@ impl App {
             Msg::MyAchievements(result) => self.dash.achievements.set(result),
 
             // ------------------------------------------------ projects ----
-            Msg::ProjectData(result) => self.projects.graph.set(result),
+            Msg::ProjectData(result) => {
+                self.projects.graph.set(result);
+                // Kick off the detail fetch for the initially selected
+                // project — otherwise it only starts on the first keypress.
+                crate::ui::projects::lazy_load_mine(self);
+                // A notification jump that arrived before the graph.
+                if let Some(slug) = self.projects.pending_focus.take() {
+                    crate::ui::projects::focus_project(self, &slug);
+                }
+            }
             Msg::Ongoing(result) => self.projects.ongoing.set(result),
             Msg::Marked(result) => self.projects.marked.set(result),
             Msg::Mine { slug, result } => {
@@ -119,10 +128,26 @@ impl App {
                 self.clusters.seats.set(result);
             }
 
+            // ------------------------------------------ notifications ----
+            Msg::EventDetail { id, result } => {
+                if let Some(popup) = &mut self.event_popup
+                    && popup.event_id == id
+                {
+                    popup.event.set(result);
+                }
+            }
+            Msg::EventWrite { subscribe, result } => match result {
+                Ok(()) => self.set_status(if subscribe {
+                    "subscribed ✓"
+                } else {
+                    "unsubscribed"
+                }),
+                Err(error) => self.set_status(format!("event: {error}")),
+            },
+
             // -------------------------------------------------- slots ----
             Msg::SlotsProjects(result) => {
                 self.slots.project_sel = 0;
-                self.slots.slot_sel = 0;
                 self.slots.projects.set(result);
             }
             Msg::SlotsSynced(result) => match result {

@@ -125,6 +125,34 @@ pub struct IntraEvent {
     pub is_waitlisted: bool,
 }
 
+/// Event page scraped from `profile.intra.42.fr/events/{id}` — richer than
+/// the list payload (full description, sign-up count, subscribe state) and
+/// available for past events too.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EventDetail {
+    pub id: u32,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub begin_at: Option<String>,
+    pub end_at: Option<String>,
+    /// Human duration as printed on the page ("6 days").
+    pub duration: Option<String>,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    pub current_subscribers: Option<u32>,
+    pub max_subscribers: Option<u32>,
+    #[serde(default)]
+    pub is_subscribed: bool,
+    /// CSRF token of the scraped page, needed to submit the rails-ujs
+    /// subscribe / unsubscribe actions.
+    pub csrf_token: Option<String>,
+    /// Absolute subscribe (POST) and unsubscribe (DELETE-override) endpoints
+    /// from the page footer; absent when the event does not allow the
+    /// action (past, full, closed, …).
+    pub subscribe_url: Option<String>,
+    pub unsubscribe_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Notification {
     pub title: Option<String>,

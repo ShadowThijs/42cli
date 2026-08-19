@@ -132,10 +132,15 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
+    // The event detail popup replaces the notification list.
+    if let Some(popup) = &app.event_popup {
+        draw_event_popup(frame, app, popup, area);
+        return;
+    }
     let popup = centered(area, 64, 20);
     frame.render_widget(Clear, popup);
     let block = theme::pane(false).title(Span::styled(
-        " notifications (any key closes) ",
+        " notifications (j/k select · Enter open · Esc close) ",
         theme::title(),
     ));
     let inner = block.inner(popup);
@@ -156,7 +161,10 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
                     } else {
                         theme::text()
                     };
-                    ListItem::new(Line::from(Span::styled(text, style)))
+                    ListItem::new(Line::from(Span::styled(
+                        util::truncate_str(&text, width),
+                        style,
+                    )))
                 })
                 .collect();
             if items.is_empty() {
@@ -165,7 +173,15 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
                     inner,
                 );
             } else {
-                frame.render_widget(List::new(items), inner);
+                let mut state = ListState::default();
+                state.select(Some(
+                    app.notifications_sel.min(items.len().saturating_sub(1)),
+                ));
+                frame.render_stateful_widget(
+                    List::new(items).highlight_style(theme::selected()),
+                    inner,
+                    &mut state,
+                );
             }
         }
         Loadable::Loading => frame.render_widget(
@@ -177,6 +193,92 @@ fn draw_notifications(frame: &mut Frame, app: &App, area: Rect) {
             inner,
         ),
         Loadable::Idle => {}
+    }
+}
+
+fn draw_event_popup(
+    frame: &mut Frame,
+    app: &App,
+    popup_state: &crate::state::EventPopup,
+    area: Rect,
+) {
+    let popup = centered(area, 64, 22);
+    frame.render_widget(Clear, popup);
+    // The footer action decides which key hint applies.
+    let title = match &popup_state.event {
+        Loadable::Ready(event) if event.subscribe_url.is_some() => {
+            " event (s subscribe · Esc close) "
+        }
+        Loadable::Ready(event) if event.unsubscribe_url.is_some() => {
+            " event (u unsubscribe · Esc close) "
+        }
+        _ => " event (Esc close) ",
+    };
+    let block = theme::pane(false).title(Span::styled(title, theme::title()));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    match &popup_state.event {
+        Loadable::Loading => frame.render_widget(
+            Paragraph::new(widgets::loading_line("loading event…", app.tick)),
+            inner,
+        ),
+        Loadable::Failed(message) => frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(message.clone(), theme::error()))),
+            inner,
+        ),
+        Loadable::Idle => {}
+        Loadable::Ready(event) => {
+            let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+                event.name.clone().unwrap_or_default(),
+                theme::bright(),
+            ))];
+            if let Some(kind) = &event.kind {
+                lines.push(widgets::kv("kind", kind.clone(), theme::text()));
+            }
+            if let Some(begin) = &event.begin_at {
+                lines.push(widgets::kv(
+                    "begins",
+                    util::fmt_datetime(begin),
+                    theme::text(),
+                ));
+            }
+            if let Some(end) = &event.end_at {
+                lines.push(widgets::kv("ends", util::fmt_datetime(end), theme::text()));
+            }
+            if let Some(duration) = &event.duration {
+                lines.push(widgets::kv("duration", duration.clone(), theme::text()));
+            }
+            if let Some(location) = &event.location {
+                lines.push(widgets::kv("location", location.clone(), theme::text()));
+            }
+            match (event.current_subscribers, event.max_subscribers) {
+                (Some(current), Some(max)) => lines.push(widgets::kv(
+                    "sign-ups",
+                    format!("{current} / {max}"),
+                    theme::text(),
+                )),
+                (Some(current), None) => {
+                    lines.push(widgets::kv("sign-ups", current.to_string(), theme::text()))
+                }
+                _ => {}
+            }
+            if event.is_subscribed {
+                lines.push(widgets::kv("status", "subscribed ✓", theme::good()));
+            }
+            if let Some(description) = &event.description {
+                let remaining = (inner.height as usize).saturating_sub(lines.len() + 2);
+                if remaining > 0 {
+                    lines.push(Line::from(""));
+                    lines.extend(util::wrap_lines(
+                        description,
+                        inner.width as usize,
+                        remaining,
+                    ));
+                }
+            }
+            frame.render_widget(Paragraph::new(lines), inner);
+        }
     }
 }
 

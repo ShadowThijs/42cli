@@ -57,19 +57,41 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
 
         Command::LoadUser { login } => load_user(api, tx, login).await,
 
+        Command::LoadEvent { id } => {
+            let result = api.event_detail(id).await;
+            let _ = tx.send(Msg::EventDetail { id, result });
+        }
+
+        Command::SetEventSubscription {
+            id,
+            url,
+            csrf_token,
+            subscribe,
+        } => {
+            let result = api
+                .set_event_subscription(&url, &csrf_token, subscribe)
+                .await;
+            if result.is_ok() {
+                // Refresh the popup so counts and the footer action match.
+                let fresh = api.event_detail(id).await;
+                let _ = tx.send(Msg::EventDetail { id, result: fresh });
+            }
+            let _ = tx.send(Msg::EventWrite { subscribe, result });
+        }
+
         Command::LoadClusters { fresh } => {
             let result = api.cluster_seats(fresh).await;
             let _ = tx.send(Msg::Clusters(result));
         }
 
-        Command::LoadSlotsOverview => {
+        Command::LoadSlotsOverview { anchor } => {
             spawn_job(&api, &tx, (), |api, ()| async move {
                 Msg::SlotsProjects(api.slots_projects().await)
             });
-            spawn_job(&api, &tx, (), |api, ()| async move {
-                Msg::ReservedSlots(api.reserved_slots(21).await)
+            spawn_job(&api, &tx, anchor, |api, anchor| async move {
+                Msg::ReservedSlots(api.reserved_slots(anchor, 21).await)
             });
-            let result = api.open_slots(21).await;
+            let result = api.open_slots(anchor, 21).await;
             let _ = tx.send(Msg::OpenSlots(result));
         }
 

@@ -333,6 +333,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     Action::Continue
 }
 
+/// Keep the selection inside the (possibly shrunken) list of the segment.
+fn clamp_selection(app: &mut App) {
+    let max = visible(app).len().saturating_sub(1);
+    app.projects.selection = app.projects.selection.min(max);
+}
+
 fn prev_segment(app: &App) -> ProjectSegment {
     let current = app.projects.segment.unwrap_or(ProjectSegment::Active);
     let index = ProjectSegment::ALL
@@ -364,6 +370,36 @@ fn lazy_load_mine(app: &mut App) {
     if !app.projects.mine.contains_key(&slug) {
         app.projects.mine.insert(slug.clone(), Loadable::Loading);
         app.send(crate::bus::Command::LoadMine { slug, fresh: false });
+    }
+}
+
+/// Select a project by slug (notification jump). Falls back to the `all`
+/// segment when the project is not part of the current one.
+pub fn focus_project(app: &mut App, slug: &str) {
+    if app.projects.graph.data().is_none() {
+        // Graph not loaded yet (first Projects entry): retry once it lands.
+        app.projects.pending_focus = Some(slug.to_owned());
+        app.set_status("loading projects…");
+        return;
+    }
+    if !visible(app)
+        .iter()
+        .any(|entry| entry.slug.as_deref() == Some(slug))
+    {
+        app.projects.segment = Some(ProjectSegment::All);
+    }
+    let position = visible(app)
+        .iter()
+        .position(|entry| entry.slug.as_deref() == Some(slug));
+    match position {
+        Some(index) => {
+            app.projects.selection = index;
+            app.projects.attachment_sel = 0;
+            app.projects.focus_details = false;
+            app.set_status(format!("opened {slug}"));
+            lazy_load_mine(app);
+        }
+        None => app.set_status(format!("project {slug} not in your graph")),
     }
 }
 

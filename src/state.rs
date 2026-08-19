@@ -208,6 +208,16 @@ pub struct ClustersState {
     pub cluster_sel: usize,
 }
 
+// ------------------------------------------------------ notifications ----
+
+/// Event detail popup opened from a notification link; it replaces the
+/// notifications list while open.
+#[derive(Debug)]
+pub struct EventPopup {
+    pub event_id: u32,
+    pub event: Loadable<EventDetail>,
+}
+
 /// One aggregated cluster row.
 #[derive(Debug, Clone)]
 pub struct ClusterRow {

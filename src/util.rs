@@ -146,6 +146,26 @@ pub fn pace_milestone_start(pace: &crate::api::models::PaceProfile) -> Option<Na
     })
 }
 
+/// Clip `value` to `width` display columns, appending an ellipsis when cut.
+pub fn truncate_str(value: &str, width: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    if value.width() <= width {
+        return value.to_owned();
+    }
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let ch_width = ch.width().unwrap_or(0);
+        if used + ch_width > width.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        used += ch_width;
+    }
+    out.push('…');
+    out
+}
+
 /// Word-wrap `text` to `width` display columns, capped at `max_lines`
 /// (the last line gets an ellipsis when cut). Returns styled lines.
 pub fn wrap_lines(text: &str, width: usize, max_lines: usize) -> Vec<ratatui::text::Line<'static>> {
