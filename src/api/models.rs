@@ -297,14 +297,29 @@ pub struct ClusterSeat {
 pub struct ProjectMine {
     pub status: Option<String>,
     pub team_name: Option<String>,
+    /// Actual teammates — the `.team-users-list` users, *not* the
+    /// evaluators that also live under `.team-content`.
     #[serde(default)]
     pub members: Vec<String>,
+    /// One entry per evaluation attempt shown on the page.
+    #[serde(default)]
+    pub evaluations: Vec<ProjectEvaluation>,
     pub git_repo: Option<String>,
     pub locked_at: Option<String>,
     pub deadline: Option<String>,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
     pub unsub_url: Option<String>,
+}
+
+/// One evaluation attempt: who corrected, with which result badge
+/// (`125%`, `success`, `fail`, …) and their closing comment.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectEvaluation {
+    #[serde(default)]
+    pub correctors: Vec<String>,
+    pub result: Option<String>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

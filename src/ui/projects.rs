@@ -196,6 +196,31 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                     )));
                 }
             }
+            if !mine.evaluations.is_empty() {
+                lines.push(Line::from(Span::styled("evaluations", theme::title())));
+                for (index, evaluation) in mine.evaluations.iter().enumerate() {
+                    let result = evaluation.result.as_deref().unwrap_or("—");
+                    let style = if result.contains("fail") {
+                        theme::error()
+                    } else {
+                        theme::good()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {:>2} ", index + 1), theme::muted()),
+                        Span::styled(format!("{result:<8}"), style),
+                        Span::styled(
+                            format!("by {}", evaluation.correctors.join(", ")),
+                            theme::text(),
+                        ),
+                    ]));
+                    if let Some(comment) = &evaluation.comment {
+                        lines.push(Line::from(Span::styled(
+                            format!("      “{}”", truncate(comment, 64)),
+                            theme::muted(),
+                        )));
+                    }
+                }
+            }
             if let Some(repo) = &mine.git_repo {
                 lines.push(Line::from(vec![
                     Span::styled("git  ", theme::muted()),

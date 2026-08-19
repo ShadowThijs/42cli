@@ -97,9 +97,26 @@ impl Api {
         Ok(seats)
     }
 
+    /// Raw `/{slug}/mine` page HTML — used by the live tests to develop the
+    /// `parse_project_mine` selectors against the real DOM.
+    #[cfg(test)]
+    pub async fn project_mine_html(&self, slug: &str) -> ApiResult<String> {
+        let resp = self
+            .http
+            .get(format!("{}/{slug}/mine", super::PROJECTS_BASE))
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ApiError::from_response("project mine", resp).await);
+        }
+        Ok(resp.text().await.unwrap_or_default())
+    }
+
     /// Scrape `projects.intra.42.fr/{slug}/mine` for team + attachments.
+    /// `mine2` — added evaluation attempts to the cached shape.
     pub async fn project_mine(&self, slug: &str, fresh: bool) -> ApiResult<super::ProjectMine> {
-        let key = format!("mine/{slug}");
+        let key = format!("mine2/{slug}");
         if !fresh && let Some(cached) = self.cache.get(&key, TTL_MINE) {
             return Ok(cached);
         }
@@ -254,12 +271,15 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
             .map(|element| element.text().collect::<String>().trim().to_owned());
     }
 
+    // Teammates: only the `.team-users-list` block. The wider
+    // `.team-content` also contains the evaluation history, whose
+    // "Evaluated by" links used to leak into the team list.
     if let (Ok(selector), Ok(user_selector)) = (
-        Selector::parse(".team-content"),
+        Selector::parse(".team-users-list"),
         Selector::parse(r#"a[href*="profile.intra.42.fr/users/"]"#),
     ) {
-        for team in document.select(&selector) {
-            for link in team.select(&user_selector) {
+        for list in document.select(&selector) {
+            for link in list.select(&user_selector) {
                 if let Some(href) = link.attr("href")
                     && let Some(login) = href.rsplit('/').next()
                     && !login.is_empty()
@@ -267,6 +287,62 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
                 {
                     mine.members.push(login.to_owned());
                 }
+            }
+        }
+    }
+
+    // Evaluations: one `.correction-item` per attempt, each carrying the
+    // corrector login, a result badge and a closing comment.
+    if let (
+        Ok(item_selector),
+        Ok(corrector_selector),
+        Ok(header_selector),
+        Ok(badge_selector),
+        Ok(comment_selector),
+    ) = (
+        Selector::parse(".correction-item"),
+        Selector::parse(r#"a[data-tooltip-login]"#),
+        Selector::parse(".corrected-header"),
+        Selector::parse("b.pull-right"),
+        Selector::parse(".correction-comment-item > span"),
+    ) {
+        for item in document.select(&item_selector) {
+            let mut evaluation = super::ProjectEvaluation::default();
+            for link in item.select(&corrector_selector) {
+                if let Some(login) = link.attr("data-tooltip-login")
+                    && !login.is_empty()
+                    && !evaluation.correctors.iter().any(|c| c == login)
+                {
+                    evaluation.correctors.push(login.to_owned());
+                }
+            }
+            if let Some(header) = item.select(&header_selector).next() {
+                evaluation.result = header
+                    .select(&badge_selector)
+                    .next()
+                    .map(|badge| {
+                        badge
+                            .text()
+                            .collect::<String>()
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .filter(|text| !text.is_empty());
+            }
+            evaluation.comment = item
+                .select(&comment_selector)
+                .next()
+                .map(|span| {
+                    span.text()
+                        .collect::<String>()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .filter(|text| !text.is_empty());
+            if !evaluation.correctors.is_empty() {
+                mine.evaluations.push(evaluation);
             }
         }
     }
