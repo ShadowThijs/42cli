@@ -53,6 +53,23 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         return Action::Continue;
     }
 
+    // So do Ctrl+Left / Ctrl+Right (keyboards without an F-row). `tui_input`
+    // has no binding on Ctrl+arrows, so this is safe inside text fields too.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::SHIFT)
+    {
+        match key.code {
+            KeyCode::Left => {
+                app.enter_tab(app.tab.step(-1));
+                return Action::Continue;
+            }
+            KeyCode::Right => {
+                app.enter_tab(app.tab.step(1));
+                return Action::Continue;
+            }
+            _ => {}
+        }
+    }
+
     // Global keys (never while typing in an input field).
     if !text_input_active(app) {
         match (key.code, key.modifiers) {

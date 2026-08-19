@@ -45,6 +45,20 @@ impl Tab {
     pub fn from_index(index: usize) -> Tab {
         Tab::ORDER[index.min(Tab::ORDER.len() - 1)]
     }
+
+    pub fn index_of(self) -> usize {
+        Tab::ORDER
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default()
+    }
+
+    /// Neighbour tab with wrap-around, for Ctrl+Left / Ctrl+Right.
+    pub fn step(self, delta: i32) -> Tab {
+        let len = Tab::ORDER.len() as i32;
+        let index = (self.index_of() as i32 + delta).rem_euclid(len) as usize;
+        Tab::ORDER[index]
+    }
 }
 
 pub struct App {

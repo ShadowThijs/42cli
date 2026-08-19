@@ -10,7 +10,7 @@ use super::theme;
 
 const BINDINGS: &[(&str, &str)] = &[
     ("global", ""),
-    ("F1 .. F6", "switch tab"),
+    ("F1 .. F6 / Ctrl+← →", "switch tab"),
     ("Tab", "move between panes"),
     ("r", "refresh current tab (bypass cache)"),
     ("n", "notifications overlay"),
