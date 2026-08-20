@@ -59,7 +59,12 @@ fn cmyk_to_rgb(data: &[u8]) -> Vec<u8> {
     // close enough for subject figures.
     let mut out = Vec::with_capacity(data.len() / 4 * 3);
     for chunk in data.chunks_exact(4) {
-        let [c, m, y, k] = [chunk[0] as f32, chunk[1] as f32, chunk[2] as f32, chunk[3] as f32];
+        let [c, m, y, k] = [
+            chunk[0] as f32,
+            chunk[1] as f32,
+            chunk[2] as f32,
+            chunk[3] as f32,
+        ];
         let (r, g, b) = (
             (255.0 - (c + k).min(255.0)) as u8,
             (255.0 - (m + k).min(255.0)) as u8,

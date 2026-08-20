@@ -110,8 +110,8 @@ impl Wrapper {
     /// instead of emitting a blank.
     fn start_cont(&mut self) {
         self.flush();
-        let untouched = self.cur_w == 0
-            || (!self.first && self.cur_w == self.cont && self.cur.len() <= 1);
+        let untouched =
+            self.cur_w == 0 || (!self.first && self.cur_w == self.cont && self.cur.len() <= 1);
         if !untouched {
             self.out.push(Line::from(std::mem::take(&mut self.cur)));
             self.cur = vec![Span::raw(" ".repeat(self.cont))];
@@ -169,7 +169,12 @@ mod tests {
     fn text(lines: &[Line<'_>]) -> Vec<String> {
         lines
             .iter()
-            .map(|line| line.spans.iter().map(|s| s.content.clone()).collect::<String>())
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|s| s.content.clone())
+                    .collect::<String>()
+            })
             .collect()
     }
 

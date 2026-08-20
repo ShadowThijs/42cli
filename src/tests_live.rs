@@ -316,7 +316,10 @@ async fn dump_project_slots_page() {
 async fn dump_scale_teams_json() {
     let api = api_from_persisted_session().await;
     let raw: serde_json::Value = api
-        .authed_get(&format!("{}/users/me/scale_teams", crate::api::INTRAPY_BASE))
+        .authed_get(&format!(
+            "{}/users/me/scale_teams",
+            crate::api::INTRAPY_BASE
+        ))
         .await
         .expect("scale teams raw");
     println!("{raw:#}");
@@ -365,25 +368,25 @@ async fn dump_scale_team_pages() {
 #[ignore]
 async fn dump_scale_team_show_page() {
     let api = api_from_persisted_session().await;
-    let Some(id) = std::env::var("CLI42_SCALE_TEAM_ID")
-        .ok()
-        .or_else(|| {
-            let html = std::fs::read_to_string("/tmp/mine-codexion.html").ok()?;
-            let start = html.find("/scale_teams/")? + "/scale_teams/".len();
-            let digits: String = html[start..]
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect();
-            digits.parse().ok()
-        })
-    else {
+    let Some(id) = std::env::var("CLI42_SCALE_TEAM_ID").ok().or_else(|| {
+        let html = std::fs::read_to_string("/tmp/mine-codexion.html").ok()?;
+        let start = html.find("/scale_teams/")? + "/scale_teams/".len();
+        let digits: String = html[start..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    }) else {
         panic!("no scale team id available");
     };
     let url = format!("{}/scale_teams/{id}", crate::api::PROJECTS_BASE);
     let resp = api.http.get(&url).send().await.expect("fetch show page");
     let page = resp.text().await.unwrap_or_default();
     std::fs::write("/tmp/scale-team-show.html", &page).expect("write dump");
-    println!("wrote /tmp/scale-team-show.html ({} bytes) for {url}", page.len());
+    println!(
+        "wrote /tmp/scale-team-show.html ({} bytes) for {url}",
+        page.len()
+    );
 }
 
 /// Evaluation specifics on the codexion `mine` page: defense date, flag
@@ -426,7 +429,10 @@ async fn evaluation_specifics_parse() {
         assert!(evaluation.evaluated_at.is_some(), "attempt has a date");
         if evaluation.flag_reason.is_none() {
             assert!(
-                evaluation.result.as_deref().is_some_and(|r| r.ends_with('%')),
+                evaluation
+                    .result
+                    .as_deref()
+                    .is_some_and(|r| r.ends_with('%')),
                 "unflagged attempt has a percentage result"
             );
         }
@@ -656,4 +662,3 @@ async fn subjects_convert_sample() {
     }
     assert!(converted >= 2, "converted at least two subjects");
 }
-

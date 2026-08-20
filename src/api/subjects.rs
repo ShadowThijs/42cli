@@ -11,7 +11,10 @@ use super::{Api, ApiError, ApiResult};
 pub(crate) fn subject_paths(slug: &str) -> (PathBuf, PathBuf) {
     let safe = slug.replace(['/', '\\'], "_");
     let dir = crate::config::cache_dir().join("subjects");
-    (dir.join(format!("{safe}.md")), dir.join(format!("{safe}.files")))
+    (
+        dir.join(format!("{safe}.md")),
+        dir.join(format!("{safe}.files")),
+    )
 }
 
 impl Api {

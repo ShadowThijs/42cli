@@ -314,12 +314,10 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                     .and_then(|summary| summary.login.clone());
                 let mut sorted = schedule.clone();
                 sorted.sort_by_key(|entry| {
-                    let mine = me
-                        .as_deref()
-                        .is_some_and(|me| {
-                            entry.corrector.as_deref() == Some(me)
-                                || entry.corrected.as_deref() == Some(me)
-                        });
+                    let mine = me.as_deref().is_some_and(|me| {
+                        entry.corrector.as_deref() == Some(me)
+                            || entry.corrected.as_deref() == Some(me)
+                    });
                     (!mine, entry.scheduled_at.clone())
                 });
                 lines.push(Line::from(Span::styled(
@@ -327,12 +325,10 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                     theme::title(),
                 )));
                 for entry in sorted.iter().take(SCHEDULE_ROWS) {
-                    let mine = me
-                        .as_deref()
-                        .is_some_and(|me| {
-                            entry.corrector.as_deref() == Some(me)
-                                || entry.corrected.as_deref() == Some(me)
-                        });
+                    let mine = me.as_deref().is_some_and(|me| {
+                        entry.corrector.as_deref() == Some(me)
+                            || entry.corrected.as_deref() == Some(me)
+                    });
                     let style = if mine {
                         theme::selected()
                     } else {

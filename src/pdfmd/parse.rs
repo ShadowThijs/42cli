@@ -103,9 +103,7 @@ fn spans_to_frags(spans: &[Span]) -> Vec<Frag> {
             }
             _ => {
                 if prev_x1.is_some_and(|x| span.x0 - x > SPACE_GAP)
-                    && frags
-                        .last()
-                        .is_some_and(|f| !f.text.ends_with(' '))
+                    && frags.last().is_some_and(|f| !f.text.ends_with(' '))
                 {
                     frags.push(Frag::plain(" "));
                 }
@@ -135,8 +133,8 @@ fn styles_italic_kin(a: &Frag, b: &Frag) -> bool {
 /// (`peer-evaluation`) breaks after its own hyphen, so these heads stay
 /// joined while `How-`/`ever` fuse back into one word.
 const COMPOUND_HEADS: [&str; 18] = [
-    "peer", "copy", "sub", "non", "re", "co", "cross", "inter", "intra", "pre", "post",
-    "self", "open", "semi", "multi", "well", "key", "left",
+    "peer", "copy", "sub", "non", "re", "co", "cross", "inter", "intra", "pre", "post", "self",
+    "open", "semi", "multi", "well", "key", "left",
 ];
 
 fn is_compound_head(head: &str) -> bool {
@@ -158,7 +156,11 @@ fn join_frags(base: &mut Vec<Frag>, more: Vec<Frag>) {
         .and_then(|last| last.text.strip_suffix('-'))
         .map(|t| t.rsplit(' ').next().unwrap_or_default().to_owned());
     if let Some(head) = head {
-        let continues = more[0].text.chars().next().is_some_and(|c| c.is_lowercase());
+        let continues = more[0]
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_lowercase());
         let same_style = base.last().is_some_and(|last| last.style_eq(&more[0]));
         if continues && same_style {
             let mut rest = more;
@@ -270,7 +272,11 @@ fn lines_of(page: &PageData) -> Vec<Line> {
         .iter()
         .filter(|s| !s.text.trim().is_empty())
         .collect();
-    spans.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap().then(a.x0.partial_cmp(&b.x0).unwrap()));
+    spans.sort_by(|a, b| {
+        a.y.partial_cmp(&b.y)
+            .unwrap()
+            .then(a.x0.partial_cmp(&b.x0).unwrap())
+    });
 
     let mut lines: Vec<Line> = Vec::new();
     for span in spans {
@@ -293,8 +299,7 @@ fn lines_of(page: &PageData) -> Vec<Line> {
         }
     }
     for line in &mut lines {
-        line.spans
-            .sort_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap());
+        line.spans.sort_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap());
     }
     lines
 }
@@ -327,9 +332,7 @@ fn near_black(color: u32) -> bool {
 }
 
 fn near(color: u32, target: u32) -> bool {
-    let d = |shift: u32| {
-        (((color >> shift) & 0xFF) as i32) - (((target >> shift) & 0xFF) as i32)
-    };
+    let d = |shift: u32| (((color >> shift) & 0xFF) as i32) - (((target >> shift) & 0xFF) as i32);
     d(16).abs() < 0x18 && d(8).abs() < 0x18 && d(0).abs() < 0x18
 }
 
@@ -391,8 +394,14 @@ fn detect_grids(segments: &[Segment]) -> Vec<Grid> {
     // separators live only in the chained verticals), plus any horizontal
     // rules inside the extent.
     let extent = (
-        verticals.iter().map(|(_, y0, _)| *y0).fold(f32::MAX, f32::min),
-        verticals.iter().map(|(_, _, y1)| *y1).fold(f32::MIN, f32::max),
+        verticals
+            .iter()
+            .map(|(_, y0, _)| *y0)
+            .fold(f32::MAX, f32::min),
+        verticals
+            .iter()
+            .map(|(_, _, y1)| *y1)
+            .fold(f32::MIN, f32::max),
     );
     let mut ys: Vec<f32> = verticals
         .iter()
@@ -534,10 +543,11 @@ pub fn document(pages: &[PageData]) -> Vec<Block> {
 
     let mut rest = pages.iter().skip(1).peekable();
     let mut has_toc = false;
-    if rest
-        .peek()
-        .is_some_and(|page| lines_of(page).first().is_some_and(|l| l.text().trim() == "Contents"))
-    {
+    if rest.peek().is_some_and(|page| {
+        lines_of(page)
+            .first()
+            .is_some_and(|l| l.text().trim() == "Contents")
+    }) {
         has_toc = true;
         toc_page(rest.next().expect("peeked"), &mut blocks);
     }
@@ -620,8 +630,11 @@ fn toc_page(page: &PageData, blocks: &mut Vec<Block>) {
 
 /// `IV`, `III.1` — the roman / roman.numer numbering columns.
 fn is_toc_number(text: &str) -> bool {
-    text.chars().all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | '.' | '0'..='9'))
-        && text.chars().any(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C'))
+    text.chars()
+        .all(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | '.' | '0'..='9'))
+        && text
+            .chars()
+            .any(|c| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C'))
 }
 
 /// What a content line is, for the main loop.
@@ -685,9 +698,7 @@ fn classify(line: &Line) -> LineKind {
     if !is_mono(first) && line.spans.iter().all(|s| s.size <= SIZE_CAPTION) {
         return LineKind::Caption;
     }
-    if all_font(line, "Italic")
-        && trimmed.starts_with(['"', '“', '‘'])
-        && line.x0 > X_BODY + 5.0
+    if all_font(line, "Italic") && trimmed.starts_with(['"', '“', '‘']) && line.x0 > X_BODY + 5.0
     {
         return LineKind::QuoteItalic;
     }
@@ -837,17 +848,11 @@ fn content_page(page: &PageData, blocks: &mut Vec<Block>, figures: &mut FigureNa
                 blocks.push(Block::Subsection(text));
             }
             LineKind::Practice(good) => {
-                let title = line
-                    .text()
-                    .replace(['✓', '✗'], "")
-                    .trim()
-                    .to_owned();
+                let title = line.text().replace(['✓', '✗'], "").trim().to_owned();
                 blocks.push(Block::Practice { good, title });
-                let accept = |l: &Line| {
-                    l.x0 >= 79.0 && l.size < SIZE_SECTION && !is_symbol(&l.spans[0])
-                };
-                let body =
-                    collect_body(&mut index, &events, &lines, &skip, &structural, &accept);
+                let accept =
+                    |l: &Line| l.x0 >= 79.0 && l.size < SIZE_SECTION && !is_symbol(&l.spans[0]);
+                let body = collect_body(&mut index, &events, &lines, &skip, &structural, &accept);
                 if !body.is_empty() {
                     blocks.push(Block::Quote {
                         frags: body,
@@ -857,12 +862,14 @@ fn content_page(page: &PageData, blocks: &mut Vec<Block>, figures: &mut FigureNa
             }
             LineKind::Bullet(sub) => {
                 let mut frags = line.content_frags();
-                let floor = if sub { X_SUB_BULLET - 4.0 } else { X_BULLET - 4.0 };
-                let accept = |l: &Line| {
-                    l.x0 >= floor && l.size < SIZE_SECTION && !is_symbol(&l.spans[0])
+                let floor = if sub {
+                    X_SUB_BULLET - 4.0
+                } else {
+                    X_BULLET - 4.0
                 };
-                let more =
-                    collect_body(&mut index, &events, &lines, &skip, &structural, &accept);
+                let accept =
+                    |l: &Line| l.x0 >= floor && l.size < SIZE_SECTION && !is_symbol(&l.spans[0]);
+                let more = collect_body(&mut index, &events, &lines, &skip, &structural, &accept);
                 join_frags(&mut frags, more);
                 blocks.push(Block::Bullet { sub, frags });
             }
@@ -944,10 +951,7 @@ fn content_page(page: &PageData, blocks: &mut Vec<Block>, figures: &mut FigureNa
                         break;
                     }
                 }
-                blocks.push(Block::Quote {
-                    frags,
-                    attribution,
-                });
+                blocks.push(Block::Quote { frags, attribution });
             }
             LineKind::Indented => {
                 let frags = line.frags();
@@ -1088,7 +1092,11 @@ mod tests {
         for seg in page.segments.iter() {
             eprintln!(
                 "  seg ({:.0},{:.0})-({:.0},{:.0}) {:06x} h={:.1} v={:.1}",
-                seg.x0, seg.y0, seg.x1, seg.y1, seg.color,
+                seg.x0,
+                seg.y0,
+                seg.x1,
+                seg.y1,
+                seg.color,
                 seg.y1 - seg.y0,
                 seg.x1 - seg.x0
             );
@@ -1136,9 +1144,18 @@ mod tests {
         }
 
         // Hyphenated word-breaks fuse; compounds keep their hyphen.
-        assert!(md.contains("understanding. Make peer"), "hyphen fuse:\n{md}");
-        assert!(md.contains("alternative perspectives"), "hyphen fuse 2:\n{md}");
-        assert!(md.contains("peer-evaluation, I can’t explain"), "compound:\n{md}");
+        assert!(
+            md.contains("understanding. Make peer"),
+            "hyphen fuse:\n{md}"
+        );
+        assert!(
+            md.contains("alternative perspectives"),
+            "hyphen fuse 2:\n{md}"
+        );
+        assert!(
+            md.contains("peer-evaluation, I can’t explain"),
+            "compound:\n{md}"
+        );
 
         // Words never glue at style boundaries or line breaks.
         for glued in [
@@ -1193,8 +1210,13 @@ mod tests {
 
     #[test]
     fn hyphen_fuses_across_lines() {
-        let mut base = vec![Frag::plain("Explaining your reasoning often reveals gaps in your un-")];
-        join_frags(&mut base, vec![Frag::plain("derstanding. Make peer learning a priority.")]);
+        let mut base = vec![Frag::plain(
+            "Explaining your reasoning often reveals gaps in your un-",
+        )];
+        join_frags(
+            &mut base,
+            vec![Frag::plain("derstanding. Make peer learning a priority.")],
+        );
         let text: String = base.iter().map(|f| f.text.as_str()).collect();
         eprintln!("joined: [{text}]");
         assert!(text.contains("understanding"), "got: {text}");
@@ -1211,7 +1233,12 @@ mod tests {
         let frags = spans_to_frags(&[
             span("LMRoman12-Bold", 72.0, 196.5, "computer networking"),
             span("LMRoman12-Regular", 196.5, 199.8, "."),
-            span("LMRoman12-Regular", 204.8, 361.8, "You will learn how to configure"),
+            span(
+                "LMRoman12-Regular",
+                204.8,
+                361.8,
+                "You will learn how to configure",
+            ),
             span("LMRoman12-Bold", 365.1, 438.2, "IP addresses"),
             span("LMRoman12-Regular", 438.2, 523.3, ", connect devices"),
         ]);

@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use pdf::content::{Op, TextDrawAdjusted};
-use pdf::object::XObject;
 use pdf::font::Font;
+use pdf::object::XObject;
 use pdf::object::{Resolve, Resources};
 use pdf::primitive::Name;
 
@@ -211,7 +211,9 @@ fn walk(
     let mut cur: Option<Span> = None;
     macro_rules! flush {
         () => {
-            if let Some(span) = cur.take() && !span.text.trim().is_empty() {
+            if let Some(span) = cur.take()
+                && !span.text.trim().is_empty()
+            {
                 data.spans.push(span);
             }
         };
@@ -256,9 +258,7 @@ fn walk(
                 flush!();
             }
             Op::TextNewline => {
-                tlm = [
-                    tlm[0], tlm[1], tlm[2], tlm[3], tlm[4], tlm[5] - leading,
-                ];
+                tlm = [tlm[0], tlm[1], tlm[2], tlm[3], tlm[4], tlm[5] - leading];
                 tm = tlm;
                 pen = (0.0, 0.0);
                 flush!();
@@ -397,9 +397,7 @@ fn invoke(
             // recurse with the form's matrix and its own resources.
             let dict = form.dict();
             let m: Mat = match &dict.matrix {
-                Some(matrix) => [
-                    matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f,
-                ],
+                Some(matrix) => [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f],
                 None => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             };
             let inner = mul(&m, ctm);
@@ -420,10 +418,7 @@ fn invoke(
                 );
             }
             let empty = Resources::default();
-            let form_resources: &Resources = dict
-                .resources
-                .as_deref()
-                .unwrap_or(&empty);
+            let form_resources: &Resources = dict.resources.as_deref().unwrap_or(&empty);
             let form_fonts = font_table(form_resources, resolve);
             walk(
                 &ops,
@@ -500,7 +495,9 @@ fn draw(
                 span.text.push(' ');
             }
         }
-        if let Some(span) = cur.take() && !span.text.trim().is_empty() {
+        if let Some(span) = cur.take()
+            && !span.text.trim().is_empty()
+        {
             data.spans.push(span);
         }
         *cur = Some(Span {

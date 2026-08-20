@@ -51,7 +51,9 @@ pub fn render(markdown: &str) -> Vec<Line<'static>> {
         if level > 0 {
             // Practice headers carry their ✓/✗ verdict in the text.
             let style = if rest.starts_with('✓') {
-                Style::default().fg(theme::GOOD).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme::GOOD)
+                    .add_modifier(Modifier::BOLD)
             } else if rest.starts_with('✗') {
                 Style::default().fg(theme::ERR).add_modifier(Modifier::BOLD)
             } else if level <= 2 {
@@ -61,10 +63,7 @@ pub fn render(markdown: &str) -> Vec<Line<'static>> {
             } else {
                 theme::bright()
             };
-            lines.push(Line::from(Span::styled(
-                format!("  {rest}"),
-                style,
-            )));
+            lines.push(Line::from(Span::styled(format!("  {rest}"), style)));
             continue;
         }
 
@@ -82,17 +81,13 @@ pub fn render(markdown: &str) -> Vec<Line<'static>> {
             } else {
                 theme::text()
             };
-            lines.push(Line::from(Span::styled(
-                format!("  {trimmed}"),
-                style,
-            )));
+            lines.push(Line::from(Span::styled(format!("  {trimmed}"), style)));
             continue;
         }
 
         if let Some(rest) = trimmed.strip_prefix("- ") {
             let pad = " ".repeat(indent.min(8));
-            let mut spans =
-                vec![Span::styled(format!("{pad}  • "), theme::muted())];
+            let mut spans = vec![Span::styled(format!("{pad}  • "), theme::muted())];
             spans.extend(inline(rest));
             lines.push(Line::from(spans));
             continue;

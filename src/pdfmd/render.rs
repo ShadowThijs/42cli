@@ -162,11 +162,7 @@ fn table(rows: &[Vec<Vec<Frag>>]) -> String {
     let mut lines = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let cells: Vec<String> = (0..columns)
-            .map(|column| {
-                row.get(column)
-                    .map(|cell| inline(cell))
-                    .unwrap_or_default()
-            })
+            .map(|column| row.get(column).map(|cell| inline(cell)).unwrap_or_default())
             .collect();
         lines.push(format!("| {} |", cells.join(" | ")));
         if index == 0 {
@@ -184,13 +180,36 @@ mod tests {
     #[test]
     fn inline_keeps_boundary_spaces() {
         let frags = vec![
-            Frag { text: "You will learn how to configure".into(), bold: false, italic: false, mono: false },
-            Frag { text: " ".into(), bold: false, italic: false, mono: false },
-            Frag { text: "IP addresses".into(), bold: true, italic: false, mono: false },
-            Frag { text: ", connect devices".into(), bold: false, italic: false, mono: false },
+            Frag {
+                text: "You will learn how to configure".into(),
+                bold: false,
+                italic: false,
+                mono: false,
+            },
+            Frag {
+                text: " ".into(),
+                bold: false,
+                italic: false,
+                mono: false,
+            },
+            Frag {
+                text: "IP addresses".into(),
+                bold: true,
+                italic: false,
+                mono: false,
+            },
+            Frag {
+                text: ", connect devices".into(),
+                bold: false,
+                italic: false,
+                mono: false,
+            },
         ];
         let out = inline(&frags);
         eprintln!("inline: [{out}]");
-        assert_eq!(out, "You will learn how to configure **IP addresses**, connect devices");
+        assert_eq!(
+            out,
+            "You will learn how to configure **IP addresses**, connect devices"
+        );
     }
 }
