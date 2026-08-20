@@ -7,6 +7,8 @@ use super::{Api, ApiResult, MeSummary};
 
 const TTL_PROFILE: Duration = Duration::from_secs(10 * 60);
 const TTL_EVENTS: Duration = Duration::from_secs(5 * 60);
+const TTL_CAMPUS: Duration = Duration::from_secs(60 * 60);
+const TTL_ACHIEVEMENTS: Duration = Duration::from_secs(60 * 60);
 
 impl Api {
     pub async fn me_summary(&self, fresh: bool) -> ApiResult<MeSummary> {
@@ -45,16 +47,30 @@ impl Api {
     }
 
     pub async fn user_campus(&self, user_id: u32) -> ApiResult<Vec<super::Campus>> {
-        self.authed_get(&format!("{}/users/{user_id}/campus", super::INTRAPY_BASE))
-            .await
+        let key = format!("users/{user_id}/campus");
+        if let Some(cached) = self.cache.get(&key, TTL_CAMPUS) {
+            return Ok(cached);
+        }
+        let campus: Vec<super::Campus> = self
+            .authed_get(&format!("{}/users/{user_id}/campus", super::INTRAPY_BASE))
+            .await?;
+        self.cache.put(&format!("users/{user_id}/campus"), &campus);
+        Ok(campus)
     }
 
     pub async fn user_achievements(&self, user_id: u32) -> ApiResult<Vec<super::Achievement>> {
-        self.authed_get(&format!(
-            "{}/users/{user_id}/achievements",
-            super::INTRAPY_BASE
-        ))
-        .await
+        let key = format!("users/{user_id}/achievements");
+        if let Some(cached) = self.cache.get(&key, TTL_ACHIEVEMENTS) {
+            return Ok(cached);
+        }
+        let ach: Vec<super::Achievement> = self
+            .authed_get(&format!(
+                "{}/users/{user_id}/achievements",
+                super::INTRAPY_BASE
+            ))
+            .await?;
+        self.cache.put(&key, &ach);
+        Ok(ach)
     }
 
     pub async fn ongoing_projects(

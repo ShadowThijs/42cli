@@ -41,10 +41,18 @@ impl App {
                 if ok {
                     self.screen = crate::app::Screen::Main;
                     self.set_status(format!("welcome back, {login}"));
-                    self.enter_tab(crate::app::Tab::Dashboard);
+                    // Only enter tab if we didn't already optimistically
+                    if !matches!(self.dash.summary, Loadable::Ready(_)) {
+                        self.enter_tab(crate::app::Tab::Dashboard);
+                    }
                 } else {
+                    // Optimistic Main -> need to bounce back to Login on failure
+                    if self.screen == crate::app::Screen::Main {
+                        self.screen = crate::app::Screen::Login;
+                        self.dash = crate::state::Dashboard::default();
+                    }
                     self.login.state = Loadable::Failed("session expired — log in".into());
-                    self.set_status("stored session expired");
+                    self.set_status("stored session expired — please log in");
                 }
             }
 

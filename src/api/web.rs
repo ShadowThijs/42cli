@@ -11,6 +11,8 @@ use super::{Api, ApiError, ApiResult};
 const TTL_GRAPH: Duration = Duration::from_secs(30 * 60);
 const TTL_CLUSTERS: Duration = Duration::from_secs(60);
 const TTL_MINE: Duration = Duration::from_secs(10 * 60);
+const TTL_MINE_DONE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const TTL_SCHEDULE_DONE: Duration = Duration::from_secs(24 * 60 * 60);
 
 impl Api {
     /// GET an intra web endpoint with the Rails session cookie, transparently
@@ -62,8 +64,20 @@ impl Api {
         fresh: bool,
     ) -> ApiResult<Vec<super::ProjectDataEntry>> {
         let key = format!("project_data/{cursus_id}/{campus_id}");
-        if !fresh && let Some(cached) = self.cache.get(&key, TTL_GRAPH) {
-            return Ok(cached);
+        if !fresh {
+            if let Some(cached) = self.cache.get(&key, TTL_GRAPH) {
+                return Ok(cached);
+            }
+            // Documents, difficulty etc rarely change: allow stale up to 24h optimistically,
+            // background refresh will correct passively when fresh=true is requested.
+            if let Some((cached, age)) = self
+                .cache
+                .get_with_age::<Vec<super::ProjectDataEntry>>(&key)
+                && age < Duration::from_secs(24 * 60 * 60)
+                && !cached.is_empty()
+            {
+                return Ok(cached);
+            }
         }
         let entries: Vec<super::ProjectDataEntry> = self
             .web_get_json(&format!(
@@ -117,8 +131,31 @@ impl Api {
     /// `mine2` — added evaluation attempts to the cached shape.
     pub async fn project_mine(&self, slug: &str, fresh: bool) -> ApiResult<super::ProjectMine> {
         let key = format!("mine2/{slug}");
-        if !fresh && let Some(cached) = self.cache.get(&key, TTL_MINE) {
-            return Ok(cached);
+        if !fresh {
+            if let Some(cached) = self.cache.get::<super::ProjectMine>(&key, TTL_MINE) {
+                return Ok(cached);
+            }
+            // Completed projects rarely change: serve stale up to 7 days optimistically
+            if let Some((cached, age)) = self.cache.get_with_age::<super::ProjectMine>(&key) {
+                let is_done = cached.status.as_deref() == Some("finished")
+                    || cached.status.as_deref() == Some("done")
+                    || !cached.evaluations.is_empty();
+                if is_done && age < TTL_MINE_DONE {
+                    // Return stale but spawn background refresh passively via next call
+                    return Ok(cached);
+                }
+                if age < Duration::from_secs(30 * 60) {
+                    // Generic stale fallback for active projects (30m)
+                    return Ok(cached);
+                }
+            }
+            if let Some(cached) = self.cache.get_stale::<super::ProjectMine>(&key) {
+                // Last resort stale: still better than empty, will be validated in background
+                // Only use if we have at least some data
+                if !cached.attachments.is_empty() || !cached.evaluations.is_empty() {
+                    return Ok(cached);
+                }
+            }
         }
         let fetch = || async {
             let resp = self
@@ -161,8 +198,25 @@ impl Api {
         fresh: bool,
     ) -> ApiResult<Vec<super::ProjectScheduleEntry>> {
         let key = format!("schedule/{slug}");
-        if !fresh && let Some(cached) = self.cache.get(&key, TTL_MINE) {
-            return Ok(cached);
+        if !fresh {
+            if let Some(cached) = self.cache.get(&key, TTL_MINE) {
+                return Ok(cached);
+            }
+            if let Some((cached, age)) = self
+                .cache
+                .get_with_age::<Vec<super::ProjectScheduleEntry>>(&key)
+            {
+                // If schedule has any graded entries (result Some), treat as done and keep longer
+                let has_results = cached.iter().any(|e| e.result.is_some());
+                let ttl = if has_results {
+                    TTL_SCHEDULE_DONE
+                } else {
+                    Duration::from_secs(30 * 60)
+                };
+                if age < ttl {
+                    return Ok(cached);
+                }
+            }
         }
         let fetch = || async {
             let resp = self
@@ -420,11 +474,13 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
             {
                 evaluation.feedback_url = Some(format!(
                     "{}{href}",
-                    if href.starts_with("http") { "" } else { super::PROJECTS_BASE }
+                    if href.starts_with("http") {
+                        ""
+                    } else {
+                        super::PROJECTS_BASE
+                    }
                 ));
-                evaluation.scale_team_id = href
-                    .split('/')
-                    .find_map(|part| part.parse().ok());
+                evaluation.scale_team_id = href.split('/').find_map(|part| part.parse().ok());
             }
             if !evaluation.correctors.is_empty() {
                 mine.evaluations.push(evaluation);
