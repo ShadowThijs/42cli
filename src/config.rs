@@ -48,25 +48,17 @@ pub fn downloads_dir() -> PathBuf {
 }
 
 pub fn load_session() -> Option<StoredSession> {
+    // Prefer encrypted vault, fall back to legacy plain file for migration.
+    if let Some(vault) = crate::secure::load_vault() {
+        return Some(crate::secure::vault_to_stored(&vault));
+    }
     let bytes = fs::read(session_path()).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
-pub fn save_session(session: &StoredSession) -> Result<()> {
-    let path = session_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context("create config dir")?;
-    }
-    fs::write(&path, serde_json::to_vec_pretty(session)?).context("write session file")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
-}
-
 pub fn clear_session() {
+    crate::secure::clear_vault();
+    // Legacy belt-and-suspenders: also wipe plain file if it somehow remains.
     let _ = fs::remove_file(session_path());
 }
 

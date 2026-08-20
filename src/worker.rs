@@ -180,6 +180,8 @@ where
 }
 
 /// Rehydrate a persisted session (tokens + cookies) and verify it.
+/// If the token is expired and refresh fails, try auto-login with stored
+/// username/password from the encrypted vault.
 async fn restore(api: Arc<Api>, tx: Sender<Msg>, stored: crate::config::StoredSession) {
     let login = stored.login.clone();
     let now = chrono::Utc::now().timestamp();
@@ -191,8 +193,46 @@ async fn restore(api: Arc<Api>, tx: Sender<Msg>, stored: crate::config::StoredSe
     .await;
 
     let mut ok = true;
+    let mut refreshed = true;
     if stored.access_expires_at - now < 30 && api.refresh().await.is_err() {
-        ok = false;
+        // Try auto-login via stored credentials
+        if let Some(vault) = crate::secure::load_vault() {
+            if !vault.username.is_empty() && !vault.password.is_empty() {
+                match auth::login(&api, &vault.username, &vault.password).await {
+                    Ok(outcome) => {
+                        // Credentials good — treat as restored.
+                        // Update login to outcome in case it changed
+                        let _ = tx.send(Msg::SessionRestored {
+                            login: outcome.login.clone(),
+                            ok: true,
+                        });
+                        // Bootstrap sessions
+                        let api_bg = Arc::clone(&api);
+                        tokio::spawn(async move {
+                            if !api_bg.has_intra_session() {
+                                auth::bootstrap_intra_session(&api_bg).await;
+                            }
+                            if !api_bg.has_slots_session() {
+                                auth::bootstrap_slots_session(&api_bg).await;
+                            }
+                            auth::persist_session(&api_bg).await;
+                        });
+                        preload_dashboard(&api, &tx, false).await;
+                        return;
+                    }
+                    Err(_) => {
+                        refreshed = false;
+                        ok = false;
+                    }
+                }
+            } else {
+                refreshed = false;
+                ok = false;
+            }
+        } else {
+            refreshed = false;
+            ok = false;
+        }
     }
     if ok {
         match api.me_summary(false).await {
@@ -210,7 +250,37 @@ async fn restore(api: Arc<Api>, tx: Sender<Msg>, stored: crate::config::StoredSe
                 });
                 preload_dashboard(&api, &tx, false).await;
             }
-            Err(_) => ok = false,
+            Err(_) => {
+                // me_summary failed — maybe token revoked, try credentials once
+                if refreshed
+                    && let Some(vault) = crate::secure::load_vault()
+                    && !vault.username.is_empty()
+                    && !vault.password.is_empty()
+                    && auth::login(&api, &vault.username, &vault.password)
+                        .await
+                        .is_ok()
+                {
+                    let api_bg = Arc::clone(&api);
+                    tokio::spawn(async move {
+                        if !api_bg.has_intra_session() {
+                            auth::bootstrap_intra_session(&api_bg).await;
+                        }
+                        if !api_bg.has_slots_session() {
+                            auth::bootstrap_slots_session(&api_bg).await;
+                        }
+                        auth::persist_session(&api_bg).await;
+                    });
+                    preload_dashboard(&api, &tx, false).await;
+                    let vault2 = crate::secure::load_vault();
+                    let new_login = vault2.map(|v| v.login).unwrap_or(login.clone());
+                    let _ = tx.send(Msg::SessionRestored {
+                        login: new_login,
+                        ok: true,
+                    });
+                    return;
+                }
+                ok = false;
+            }
         }
     }
     let _ = tx.send(Msg::SessionRestored { login, ok });

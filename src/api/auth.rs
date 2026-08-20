@@ -97,6 +97,8 @@ pub async fn login(api: &Api, username: &str, password: &str) -> ApiResult<Login
 
     let tokens = api.tokens().await.expect("tokens were just set");
     let (login, user_id) = decode_jwt_identity(&tokens.access_token)?;
+    // Save credentials securely for auto-relogin.
+    persist_credentials(username, password);
     persist_session(api).await;
 
     Ok(LoginOutcome { login, user_id })
@@ -295,8 +297,32 @@ pub async fn persist_session(api: &Api) {
         user_id: identity.as_ref().map_or(0, |(_, id)| *id),
         cookies: api.cookies.snapshot(chrono::Utc::now().timestamp()),
     };
-    if let Err(error) = config::save_session(&session) {
+    // Merge existing credentials from vault if present.
+    let vault_opt = crate::secure::load_vault();
+    let vault = if let Some(mut v) = vault_opt {
+        v.access_token = session.access_token.clone();
+        v.refresh_token = session.refresh_token.clone();
+        v.access_expires_at = session.access_expires_at;
+        v.login = session.login.clone();
+        v.user_id = session.user_id;
+        v.cookies = session.cookies.clone();
+        v
+    } else {
+        crate::secure::stored_to_vault(&session, &session.login, "")
+    };
+    if let Err(error) = crate::secure::save_vault(&vault) {
         tracing_note(&error.to_string());
+    }
+}
+
+/// Persist credentials alongside the session (called after successful login).
+pub fn persist_credentials(username: &str, password: &str) {
+    let _ = crate::secure::save_credentials(username, password);
+    // Also update vault's username field if vault exists.
+    if let Some(mut v) = crate::secure::load_vault() {
+        v.username = username.to_owned();
+        v.password = password.to_owned();
+        let _ = crate::secure::save_vault(&v);
     }
 }
 
