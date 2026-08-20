@@ -3,7 +3,7 @@
 //! hours (drag out a range to open, `d` to close).
 
 use chrono::{DateTime, Duration, Local};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -199,12 +199,12 @@ fn draw_hours(frame: &mut Frame, app: &App, area: Rect) {
 // ------------------------------------------------------------ shared ----
 
 fn week_title(app: &App, prefix: &str) -> String {
-    let monday = week_grid::monday_of(app.slots.week_anchor);
-    let sunday = monday + Duration::days(6);
+    let first = app.slots.week_anchor;
+    let last = first + Duration::days(6);
     format!(
         "{prefix}{} – {} ",
-        monday.format("%d %b"),
-        sunday.format("%d %b")
+        first.format("%d %b"),
+        last.format("%d %b")
     )
 }
 
@@ -327,6 +327,21 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     }
 
     match key.code {
+        // Vim-style half-page jumps — 15-minute rows make single steps
+        // far too slow to cross a day. (Plain d/u stay mode keys; these
+        // arms sit above them so the modifier wins.)
+        KeyCode::Char('d') | KeyCode::Char('f')
+            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            let half = app.slots.grid_view.get().max(1) / 2;
+            move_cursor(app, 0, half as i32);
+        }
+        KeyCode::Char('u') | KeyCode::Char('b')
+            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            let half = app.slots.grid_view.get().max(1) / 2;
+            move_cursor(app, 0, -(half as i32));
+        }
         KeyCode::Up | KeyCode::Char('k') => move_cursor(app, 0, -1),
         KeyCode::Down | KeyCode::Char('j') => move_cursor(app, 0, 1),
         KeyCode::Left | KeyCode::Char('h') => move_cursor(app, -1, 0),

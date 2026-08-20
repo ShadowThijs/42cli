@@ -1,7 +1,8 @@
 //! Week calendar shared by both slots modes — the TUI twin of the
-//! FullCalendar week view on slots.42belgium.be: Monday-first columns, the
-//! full 24 hours in 15-minute cells (the site's snap granularity), a
-//! cursor cell and a drag-out range for opening hours.
+//! FullCalendar week view on slots.42belgium.be: the anchor day first
+//! (today, until the week is shifted), the full 24 hours in 15-minute
+//! cells (the site's snap granularity), a cursor cell and a drag-out
+//! range for opening hours.
 //!
 //! Slots render as background-coloured blocks — campus colour for
 //! bookable/open hours, green for yours, red for booked-by-another, grey
@@ -44,17 +45,13 @@ pub fn bookable_from() -> DateTime<Local> {
         .unwrap_or(earliest)
 }
 
-/// Monday of `anchor`'s week (the grid always starts on one).
-pub fn monday_of(anchor: NaiveDate) -> NaiveDate {
-    anchor - Duration::days(anchor.weekday().num_days_from_monday() as i64)
-}
-
-/// Local time of a calendar cell (weekday 0..6, 15-minute row). `row ==
-/// ROWS` is the day's midnight bound and rolls onto the next day, so a
-/// range ending on the last cell has a valid end time.
+/// Local time of a calendar cell (day column, 15-minute row), counting
+/// from the anchor day. `row == ROWS` is the day's midnight bound and
+/// rolls onto the next day, so a range ending on the last cell has a
+/// valid end time.
 pub fn cell_time(anchor: NaiveDate, day: usize, row: usize) -> Option<DateTime<Local>> {
     let minutes = (row as u32) * 15;
-    let date = monday_of(anchor) + Duration::days(day as i64 + (minutes / 1440) as i64);
+    let date = anchor + Duration::days(day as i64 + (minutes / 1440) as i64);
     let naive = date.and_hms_opt(START_HOUR + (minutes % 1440) / 60, (minutes % 1440) % 60, 0)?;
     Local.from_local_datetime(&naive).single()
 }
@@ -157,10 +154,10 @@ pub fn draw(
     let scroll = clamp_scroll(slots, visible);
 
     let today = Local::now().date_naive();
-    let monday = monday_of(slots.week_anchor);
+    let first = slots.week_anchor;
     let mut header = Line::from(Span::raw(" ".repeat(TIME_GUTTER)));
     for day in 0..7 {
-        let date = monday + Duration::days(day as i64);
+        let date = first + Duration::days(day as i64);
         let label = format!(
             "{:<width$}",
             format!("{} {:02}", short_weekday(date), date.day()),
@@ -342,21 +339,8 @@ mod tests {
         }
     }
 
-    /// 2026-08-19 is a Wednesday; Monday of that week is the 17th.
-    #[test]
-    fn monday_snapping() {
-        let wed = NaiveDate::from_ymd_opt(2026, 8, 19).unwrap();
-        assert_eq!(
-            monday_of(wed),
-            NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()
-        );
-        assert_eq!(
-            monday_of(NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()),
-            NaiveDate::from_ymd_opt(2026, 8, 17).unwrap()
-        );
-    }
-
-    /// Every cell is a 15-minute step, through all 24 hours.
+    /// Every cell is a 15-minute step, through all 24 hours, counting from
+    /// the anchor day itself.
     #[test]
     fn cells_step_quarter_hours_all_day() {
         let anchor = NaiveDate::from_ymd_opt(2026, 8, 17).unwrap();
@@ -378,6 +362,7 @@ mod tests {
 
     #[test]
     fn blocks_carry_their_start_time() {
+        // Day 0 is the anchor day itself: Wednesday the 19th.
         let anchor = NaiveDate::from_ymd_opt(2026, 8, 19).unwrap();
         // Wednesday 10:00–11:30 local (CEST = +02:00, so 08:00–09:30 UTC).
         let slots = vec![
@@ -391,16 +376,16 @@ mod tests {
         ];
         let cells = build_cells(&slots, anchor, true);
         // 10:00 local = row 40; the block announces itself on the first row.
-        assert_eq!(cells[2][40].starts_at.as_deref(), Some("10:00"));
-        assert_eq!(cells[2][41].starts_at, None);
+        assert_eq!(cells[0][40].starts_at.as_deref(), Some("10:00"));
+        assert_eq!(cells[0][41].starts_at, None);
         // Reserved wins where it overlaps; both announce their own starts.
-        assert_eq!(cells[2][42].kind, CellKind::Booked);
-        assert_eq!(cells[2][42].starts_at.as_deref(), Some("10:30"));
+        assert_eq!(cells[0][42].kind, CellKind::Booked);
+        assert_eq!(cells[0][42].starts_at.as_deref(), Some("10:30"));
         // In booking mode the same reserved slot is *mine* instead.
         let cells = build_cells(&slots, anchor, false);
-        assert_eq!(cells[2][42].kind, CellKind::Mine);
+        assert_eq!(cells[0][42].kind, CellKind::Mine);
         // Nothing on Thursday.
-        assert_eq!(cells[3][10].kind, CellKind::Empty);
+        assert_eq!(cells[1][10].kind, CellKind::Empty);
     }
 }
 
