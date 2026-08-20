@@ -9,6 +9,7 @@ mod cookies;
 mod event;
 mod input;
 mod msg;
+mod pdfmd;
 mod state;
 mod ui;
 mod util;

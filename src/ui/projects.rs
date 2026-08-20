@@ -264,8 +264,16 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 ));
             }
             if !mine.attachments.is_empty() {
+                let any_pdf = mine
+                    .attachments
+                    .iter()
+                    .any(|attachment| attachment.name.to_lowercase().ends_with(".pdf"));
                 lines.push(Line::from(Span::styled(
-                    "documents (d = download)",
+                    if any_pdf {
+                        "documents (d = download · v = view subject)"
+                    } else {
+                        "documents (d = download)"
+                    },
                     theme::title(),
                 )));
                 for (index, attachment) in mine.attachments.iter().enumerate() {
@@ -759,6 +767,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                     });
                 }
             }
+            KeyCode::Char('v') => open_subject_viewer(app),
             KeyCode::Char('g') => open_clone_prompt(app),
             _ => {}
         }
@@ -875,6 +884,56 @@ pub fn focus_project(app: &mut App, slug: &str) {
         }
         None => app.set_status(format!("project {slug} not in your graph")),
     }
+}
+
+/// `v` on a PDF attachment: open the in-TUI subject viewer. The markdown is
+/// fetched + converted by the worker and cached on disk for next time.
+fn open_subject_viewer(app: &mut App) {
+    let entries = visible(app);
+    let Some(entry) = entries.get(app.projects.selection) else {
+        return;
+    };
+    let Some(slug) = entry.slug.clone() else {
+        return;
+    };
+    let Some((name, url)) = app
+        .projects
+        .mine
+        .get(&slug)
+        .and_then(|slot| slot.data())
+        .and_then(|mine| mine.attachments.get(app.projects.attachment_sel))
+        .map(|attachment| (attachment.name.clone(), attachment.url.clone()))
+    else {
+        app.set_status("loading project…");
+        return;
+    };
+    if !name.to_lowercase().ends_with(".pdf") {
+        app.set_status("only PDF subjects can be viewed");
+        return;
+    }
+
+    let title = entry.name.clone().unwrap_or_else(|| slug.clone());
+    if let Some(Loadable::Ready(markdown)) = app.projects.subjects.get(&slug) {
+        app.subject_view = Some(crate::state::SubjectView {
+            slug: slug.clone(),
+            title,
+            content: Loadable::Ready(markdown.clone()),
+            scroll: 0,
+            view_height: std::cell::Cell::new(0),
+            total_height: std::cell::Cell::new(0),
+        });
+        return;
+    }
+    app.subject_view = Some(crate::state::SubjectView {
+        slug: slug.clone(),
+        title,
+        content: Loadable::Loading,
+        scroll: 0,
+        view_height: std::cell::Cell::new(0),
+        total_height: std::cell::Cell::new(0),
+    });
+    app.set_status("converting subject…");
+    app.send(crate::bus::Command::LoadSubject { slug, url });
 }
 
 fn clamp_attachment_sel(app: &mut App) {

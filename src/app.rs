@@ -71,6 +71,7 @@ pub struct App {
     pub search: SearchState,
     pub user: UserView,
     pub clusters: ClustersState,
+    pub subject_view: Option<crate::state::SubjectView>,
     pub notifications_open: bool,
     pub notifications_sel: usize,
     pub event_popup: Option<crate::state::EventPopup>,
@@ -104,6 +105,7 @@ impl App {
             search: SearchState::default(),
             user: UserView::default(),
             clusters: ClustersState::default(),
+            subject_view: None,
             notifications_open: false,
             notifications_sel: 0,
             event_popup: None,
@@ -192,5 +194,6 @@ impl App {
         self.notifications_open = false;
         self.notifications_sel = 0;
         self.event_popup = None;
+        self.subject_view = None;
     }
 }

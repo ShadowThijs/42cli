@@ -6,6 +6,7 @@ pub mod error;
 pub mod intrapy;
 pub mod models;
 pub mod slots;
+pub mod subjects;
 pub mod web;
 
 use std::sync::Arc;

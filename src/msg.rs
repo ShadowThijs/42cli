@@ -82,6 +82,15 @@ impl App {
                 let slot = self.projects.schedule.entry(slug).or_default();
                 slot.set(result);
             }
+            Msg::SubjectLoaded { slug, result } => {
+                if let Some(view) = &mut self.subject_view
+                    && view.slug == slug
+                {
+                    view.content.set(result.clone());
+                }
+                let slot = self.projects.subjects.entry(slug).or_default();
+                slot.set(result);
+            }
             Msg::DownloadDone { name, result } => {
                 self.projects.downloading.remove(&name);
                 match result {

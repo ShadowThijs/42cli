@@ -604,3 +604,56 @@ async fn probe_booking_rules() {
     );
 }
 
+/// Convert a random sample of my done projects' subject PDFs and dump the
+/// markdown to /tmp for eyeballing — the converter's live acceptance test.
+#[tokio::test]
+#[ignore]
+async fn subjects_convert_sample() {
+    let api = api_from_persisted_session().await;
+
+    let graph = api.project_data(21, 12, false).await.expect("graph");
+    let mut done: Vec<&crate::api::ProjectDataEntry> = graph
+        .iter()
+        .filter(|entry| entry.state.as_deref() == Some("done"))
+        .collect();
+    use rand::seq::SliceRandom;
+    done.shuffle(&mut rand::rng());
+    assert!(done.len() >= 5, "enough done projects to sample");
+
+    let mut converted = 0;
+    for entry in done.iter() {
+        if converted >= 4 {
+            break;
+        }
+        let Some(slug) = &entry.slug else { continue };
+        let Ok(mine) = api.project_mine(slug, false).await else {
+            continue;
+        };
+        let Some(pdf) = mine
+            .attachments
+            .iter()
+            .find(|a| a.name.to_lowercase().ends_with(".pdf"))
+        else {
+            continue;
+        };
+        let markdown = api
+            .subject_markdown(slug, &pdf.url)
+            .await
+            .unwrap_or_else(|error| panic!("convert {slug}: {error}"));
+        std::fs::write(format!("/tmp/subject-{slug}.md"), &markdown).unwrap();
+        eprintln!(
+            "== {slug}: {} bytes markdown, {} chapters, {} figures",
+            markdown.len(),
+            markdown.matches("## Chapter").count(),
+            markdown.matches("](").count(),
+        );
+        assert!(markdown.contains("# "), "{slug}: no title");
+        assert!(
+            markdown.matches("## ").count() >= 2,
+            "{slug}: suspiciously few chapters"
+        );
+        converted += 1;
+    }
+    assert!(converted >= 2, "converted at least two subjects");
+}
+

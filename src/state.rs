@@ -129,6 +129,8 @@ pub struct ProjectsState {
     pub mine: HashMap<String, Loadable<ProjectMine>>,
     /// Evaluation schedule per slug (`/{slug}/scale_teams`).
     pub schedule: HashMap<String, Loadable<Vec<ProjectScheduleEntry>>>,
+    /// Converted subject markdown per slug (PDF viewer, `v` on an attachment).
+    pub subjects: HashMap<String, Loadable<String>>,
     pub downloading: HashMap<String, bool>,
     /// Slugs with a `git clone` in flight (triggered with `g`).
     pub cloning: Vec<String>,
@@ -153,6 +155,22 @@ pub struct ClonePrompt {
     pub focus: u8,
     /// Path candidates for the destination (Tab completion).
     pub completions: Option<String>,
+}
+
+// ------------------------------------------------------- subject view ----
+
+/// Full-screen subject viewer opened with `v` from the projects details.
+#[derive(Debug)]
+pub struct SubjectView {
+    pub slug: String,
+    pub title: String,
+    pub content: Loadable<String>,
+    /// Vertical scroll offset in rendered lines.
+    pub scroll: u16,
+    /// Visible rows of the last render (for page-wise keys).
+    pub view_height: std::cell::Cell<u16>,
+    /// Total rendered rows of the last render.
+    pub total_height: std::cell::Cell<u16>,
 }
 
 // ------------------------------------------------------------- slots ----

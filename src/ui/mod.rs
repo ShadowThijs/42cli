@@ -2,15 +2,18 @@
 
 pub mod clusters;
 pub mod dashboard;
+pub mod markdown;
 pub mod help;
 pub mod login;
 pub mod projects;
 pub mod search;
 pub mod slots;
+pub mod subject;
 pub mod theme;
 pub mod user;
 pub mod week_grid;
 pub mod widgets;
+pub mod wrap;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -49,6 +52,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     draw_status(frame, app, rows[2]);
 
+    if app.subject_view.is_some() {
+        subject::draw(frame, app, area);
+        return;
+    }
     if app.notifications_open {
         draw_notifications(frame, app, area);
     }
@@ -119,7 +126,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     }
     let hints = match app.tab {
         Tab::Dashboard => "F1-F6 tabs · n notifications · ? help",
-        Tab::Projects => "/ filter · ←→ segment · Tab pane · d download",
+        Tab::Projects => "/ filter · ←→ segment · Tab pane · d download · v view subject",
         Tab::Slots => "p/o mode · ←→ project · Enter book · Tab form · s sync",
         Tab::Search => "type to search · Enter open profile",
         Tab::User => "Esc back to search",

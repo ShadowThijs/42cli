@@ -55,6 +55,11 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::DownloadDone { name, result });
         }
 
+        Command::LoadSubject { slug, url } => {
+            let result = api.subject_markdown(&slug, &url).await;
+            let _ = tx.send(Msg::SubjectLoaded { slug, result });
+        }
+
         Command::CloneRepo {
             slug,
             repo,

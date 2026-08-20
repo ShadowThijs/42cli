@@ -29,6 +29,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         handle_notification_key(app, key);
         return Action::Continue;
     }
+    // The subject viewer is a full-screen overlay: it swallows everything.
+    if app.subject_view.is_some() {
+        ui::subject::handle_key(app, key);
+        return Action::Continue;
+    }
+
     // The clone prompt is a proper overlay too — it must swallow F-keys and
     // global shortcuts while destination / folder name are being typed.
     if app.projects.clone_prompt.is_some() {

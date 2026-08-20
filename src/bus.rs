@@ -44,6 +44,11 @@ pub enum Command {
         name: String,
         url: String,
     },
+    /// Fetch + convert a subject PDF to markdown for the in-TUI viewer.
+    LoadSubject {
+        slug: String,
+        url: String,
+    },
     CloneRepo {
         slug: String,
         repo: String,
@@ -136,6 +141,10 @@ pub enum Msg {
     },
     DownloadDone {
         name: String,
+        result: Result<String, ApiError>,
+    },
+    SubjectLoaded {
+        slug: String,
         result: Result<String, ApiError>,
     },
     CloneDone {
