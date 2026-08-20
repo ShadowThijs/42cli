@@ -25,13 +25,40 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         true,
         false,
     );
-    widgets::loadable(
-        frame,
-        rows[1],
-        " results ",
-        &app.search.results,
-        app.tick,
-        |frame, area, results| {
+    // Search is the most latency-sensitive pane — keep its loading state
+    // deliberately minimal: single spinner line, no skeleton, no pane fill.
+    let block = widgets::titled_block(" results ", false);
+    let inner = block.inner(rows[1]);
+    frame.render_widget(block, rows[1]);
+    match &app.search.results {
+        crate::state::Loadable::Idle => {
+            let hint = if app.search.input.value().len() < MIN_QUERY {
+                "type at least 2 characters to search"
+            } else {
+                "press enter to search"
+            };
+            widgets::hint(frame, inner, hint);
+        }
+        crate::state::Loadable::Loading => {
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(widgets::loading_line("searching…", app.tick)),
+                inner,
+            );
+        }
+        crate::state::Loadable::Failed(msg) => {
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(Line::from(Span::styled(
+                    msg.clone(),
+                    theme::error(),
+                ))),
+                inner,
+            );
+        }
+        crate::state::Loadable::Ready(results) => {
+            if results.is_empty() {
+                widgets::hint(frame, inner, "no matches");
+                return;
+            }
             let items: Vec<ListItem> = results
                 .iter()
                 .map(|result| {
@@ -41,21 +68,17 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     )))
                 })
                 .collect();
-            if items.is_empty() {
-                widgets::hint(frame, area, "no matches");
-                return;
-            }
             let mut state = ListState::default();
             state.select(Some(
                 app.search.selection.min(results.len().saturating_sub(1)),
             ));
             frame.render_stateful_widget(
                 List::new(items).highlight_style(theme::selected()),
-                area,
+                inner,
                 &mut state,
             );
-        },
-    );
+        }
+    }
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {

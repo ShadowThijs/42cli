@@ -19,6 +19,10 @@ pub fn spinner(tick: u64) -> char {
 
 /// Render a pane whose content depends on a `Loadable`: spinner while
 /// loading, error line on failure, `render` on success.
+/// Keeps the visual extremely minimal — single spinner line — which is the
+/// idiomatic ratatui pattern. Skeleton is available via `skeleton()` for
+/// larger panes that want a faint placeholder, but search and most panes
+/// deliberately stay to one line.
 pub fn loadable<T>(
     frame: &mut Frame,
     area: Rect,
