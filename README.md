@@ -41,14 +41,14 @@ Sessions (tokens + cookies) are cached in `~/.config/42cli/session.json`
 
 ## Keys
 
-| Key            | Action                                  |
-| -------------- | --------------------------------------- |
-| `1`..`6`, `Tab`| switch tabs                             |
-| `r`            | refresh current tab (bypass cache)      |
-| `n`            | notifications overlay                   |
-| `?`            | help overlay                            |
-| `L`            | logout                                  |
-| `q` / `Ctrl+C` | quit                                    |
+| Key                                   | Action                                  |
+| ------------------------------------- | --------------------------------------- |
+| `f1`..`f6` / `Ctrl+left` `Ctrl+right` | switch tabs                             |
+| `r`                                   | refresh current tab (bypass cache)      |
+| `n`                                   | notifications overlay                   |
+| `?`                                   | help overlay                            |
+| `L`                                   | logout                                  |
+| `q` / `Ctrl+C`                        | quit                                    |
 
 Per-tab bindings are listed in the status bar and the `?` overlay.
 
