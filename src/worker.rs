@@ -45,6 +45,11 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::Mine { slug, result });
         }
 
+        Command::LoadSchedule { slug, fresh } => {
+            let result = api.project_schedule(&slug, fresh).await;
+            let _ = tx.send(Msg::Schedule { slug, result });
+        }
+
         Command::DownloadAttachment { name, url } => {
             let result = api.download_attachment(&url, &name).await;
             let _ = tx.send(Msg::DownloadDone { name, result });

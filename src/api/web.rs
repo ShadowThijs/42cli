@@ -151,6 +151,58 @@ impl Api {
         Ok(mine)
     }
 
+    /// Scrape `projects.intra.42.fr/{slug}/scale_teams` — the project's
+    /// evaluation schedule: who corrects whom and when, plus each attempt's
+    /// result and the corrected's feedback once it happened. Page 1 holds
+    /// the ~25 most recent bookings.
+    pub async fn project_schedule(
+        &self,
+        slug: &str,
+        fresh: bool,
+    ) -> ApiResult<Vec<super::ProjectScheduleEntry>> {
+        let key = format!("schedule/{slug}");
+        if !fresh && let Some(cached) = self.cache.get(&key, TTL_MINE) {
+            return Ok(cached);
+        }
+        let fetch = || async {
+            let resp = self
+                .http
+                .get(format!("{}/{slug}/scale_teams", super::PROJECTS_BASE))
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(ApiError::from_response("project schedule", resp).await);
+            }
+            // A dead Rails session bounces to the signin page (HTTP 200).
+            if resp
+                .url()
+                .host_str()
+                .is_some_and(|host| host.contains("signin"))
+            {
+                return Err(ApiError::SessionExpired);
+            }
+            let html = resp.text().await.unwrap_or_default();
+            parse_scale_team_schedule(&html).ok_or_else(|| ApiError::Parse {
+                endpoint: "project schedule",
+                detail: format!("could not parse `{slug}`"),
+            })
+        };
+        let schedule = match fetch().await {
+            Ok(schedule) => schedule,
+            Err(ApiError::SessionExpired) => {
+                if super::auth::bootstrap_intra_session(self).await {
+                    fetch().await?
+                } else {
+                    return Err(ApiError::SessionExpired);
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        self.cache.put(&key, &schedule);
+        Ok(schedule)
+    }
+
     /// Download a CDN document (subjects, archives) into the downloads dir
     /// and return the destination path.
     pub async fn download_attachment(&self, url: &str, name: &str) -> ApiResult<String> {
@@ -292,19 +344,27 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
     }
 
     // Evaluations: one `.correction-item` per attempt, each carrying the
-    // corrector login, a result badge and a closing comment.
+    // corrector login, a result badge, a closing comment, the defense date,
+    // a flag reason when flagged, and the feedback link while feedback on
+    // the correction is still pending.
     if let (
         Ok(item_selector),
         Ok(corrector_selector),
         Ok(header_selector),
         Ok(badge_selector),
         Ok(comment_selector),
+        Ok(date_selector),
+        Ok(flag_selector),
+        Ok(feedback_selector),
     ) = (
         Selector::parse(".correction-item"),
         Selector::parse(r#"a[data-tooltip-login]"#),
         Selector::parse(".corrected-header"),
         Selector::parse("b.pull-right"),
         Selector::parse(".correction-comment-item > span"),
+        Selector::parse("span[data-long-date]"),
+        Selector::parse(r#"span.iconf-folder-1[title]"#),
+        Selector::parse(r#"a[href*="/feedbacks/new"]"#),
     ) {
         for item in document.select(&item_selector) {
             let mut evaluation = super::ProjectEvaluation::default();
@@ -341,6 +401,31 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
                         .join(" ")
                 })
                 .filter(|text| !text.is_empty());
+            evaluation.evaluated_at = item
+                .select(&date_selector)
+                .next()
+                .and_then(|span| span.attr("data-long-date"))
+                .and_then(long_date_to_rfc3339);
+            // A flagged attempt carries its reason on the danger folder icon
+            // (`title='empty_work'`); unflagged attempts have no such icon.
+            evaluation.flag_reason = item
+                .select(&flag_selector)
+                .next()
+                .and_then(|icon| icon.attr("title"))
+                .map(str::trim)
+                .filter(|reason| !reason.is_empty())
+                .map(str::to_owned);
+            if let Some(link) = item.select(&feedback_selector).next()
+                && let Some(href) = link.attr("href")
+            {
+                evaluation.feedback_url = Some(format!(
+                    "{}{href}",
+                    if href.starts_with("http") { "" } else { super::PROJECTS_BASE }
+                ));
+                evaluation.scale_team_id = href
+                    .split('/')
+                    .find_map(|part| part.parse().ok());
+            }
             if !evaluation.correctors.is_empty() {
                 mine.evaluations.push(evaluation);
             }
@@ -391,6 +476,75 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
     }
 
     Some(mine)
+}
+
+/// Parse `/{slug}/scale_teams`: one `.scaleteam-list-item` per booking —
+/// header "A will correct B's group scheduled on <date>", then optional
+/// final mark, comment and corrected-feedback blocks once graded.
+fn parse_scale_team_schedule(html: &str) -> Option<Vec<super::ProjectScheduleEntry>> {
+    use scraper::{Html, Selector};
+
+    let document = Html::parse_document(html);
+    let item_selector = Selector::parse(".scaleteam-list-item").ok()?;
+    let login_selector = Selector::parse(r#"a[data-tooltip-login]"#).ok()?;
+    let mark_selector = Selector::parse(".final-mark .rating").ok()?;
+    let comment_selector = Selector::parse(".final-mark .comment").ok()?;
+    let feedback_selector = Selector::parse(".feedback [data-toggle='tooltip']").ok()?;
+
+    let mut entries = Vec::new();
+    for item in document.select(&item_selector) {
+        let mut entry = super::ProjectScheduleEntry::default();
+        // Header pattern: <b>corrector</b> will correct <b>corrected</b>
+        // scheduled on <b>date</b> — the date is the only <b> without a
+        // user link inside.
+        for header in item.select(&Selector::parse(".header").ok()?) {
+            let mut logins = header.select(&login_selector).filter_map(|link| {
+                let login = link.attr("data-tooltip-login").unwrap_or_default();
+                (!login.is_empty()).then_some(login.to_owned())
+            });
+            entry.corrector = logins.next();
+            entry.corrected = logins.next();
+            if let Ok(b_selector) = Selector::parse("b") {
+                for bold in header.select(&b_selector) {
+                    if bold.select(&login_selector).next().is_none() {
+                        let text = collapse_ws(&bold.text().collect::<String>());
+                        if !text.is_empty() {
+                            entry.scheduled_at = Some(text);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let text_of = |selector: &Selector| {
+            item.select(selector)
+                .next()
+                .map(|element| collapse_ws(&element.text().collect::<String>()))
+                .filter(|text| !text.is_empty())
+        };
+        // Upcoming rows render an empty rating shell ("%" with no mark).
+        entry.result = text_of(&mark_selector).filter(|mark| mark != "%");
+        entry.comment = text_of(&comment_selector);
+        entry.feedback = item
+            .select(&feedback_selector)
+            .next()
+            .and_then(|element| element.attr("title"))
+            .map(collapse_ws)
+            .filter(|title| !title.is_empty());
+        if entry.corrector.is_some() || entry.corrected.is_some() {
+            entries.push(entry);
+        }
+    }
+    // Zero rows is a valid schedule (no evaluations yet): recognize the
+    // page by its "Evaluations made for …" heading instead of failing.
+    if entries.is_empty()
+        && !document
+            .select(&Selector::parse("h2.main-title").ok()?)
+            .any(|heading| heading.text().collect::<String>().contains("Evaluations"))
+    {
+        return None;
+    }
+    Some(entries)
 }
 
 fn select_attr(document: &scraper::Html, selector: &str, attr: &str) -> Option<String> {

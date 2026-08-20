@@ -35,6 +35,11 @@ pub enum Command {
         slug: String,
         fresh: bool,
     },
+    /// Project evaluation schedule (`/{slug}/scale_teams`).
+    LoadSchedule {
+        slug: String,
+        fresh: bool,
+    },
     DownloadAttachment {
         name: String,
         url: String,
@@ -124,6 +129,10 @@ pub enum Msg {
     Mine {
         slug: String,
         result: Result<ProjectMine, ApiError>,
+    },
+    Schedule {
+        slug: String,
+        result: Result<Vec<ProjectScheduleEntry>, ApiError>,
     },
     DownloadDone {
         name: String,

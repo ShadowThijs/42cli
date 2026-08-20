@@ -127,6 +127,8 @@ pub struct ProjectsState {
     pub ongoing: Loadable<Vec<OngoingProject>>,
     pub marked: Loadable<Vec<MarkedProject>>,
     pub mine: HashMap<String, Loadable<ProjectMine>>,
+    /// Evaluation schedule per slug (`/{slug}/scale_teams`).
+    pub schedule: HashMap<String, Loadable<Vec<ProjectScheduleEntry>>>,
     pub downloading: HashMap<String, bool>,
     /// Slugs with a `git clone` in flight (triggered with `g`).
     pub cloning: Vec<String>,

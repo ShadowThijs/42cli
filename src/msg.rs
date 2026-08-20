@@ -78,6 +78,10 @@ impl App {
                 let slot = self.projects.mine.entry(slug).or_default();
                 slot.set(result);
             }
+            Msg::Schedule { slug, result } => {
+                let slot = self.projects.schedule.entry(slug).or_default();
+                slot.set(result);
+            }
             Msg::DownloadDone { name, result } => {
                 self.projects.downloading.remove(&name);
                 match result {

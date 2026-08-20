@@ -307,6 +307,159 @@ async fn dump_project_slots_page() {
     );
 }
 
+/// Dump the raw `/users/me/scale_teams` payload — the model is
+/// `Option`-heavy and flattens unknown fields, so this shows which
+/// evaluation-specific fields (project, team, feedback, ratings) the
+/// backend really returns and which are worth modeling.
+#[tokio::test]
+#[ignore]
+async fn dump_scale_teams_json() {
+    let api = api_from_persisted_session().await;
+    let raw: serde_json::Value = api
+        .authed_get(&format!("{}/users/me/scale_teams", crate::api::INTRAPY_BASE))
+        .await
+        .expect("scale teams raw");
+    println!("{raw:#}");
+}
+
+/// Dump the `/{slug}/mine` HTML and follow every scale-team link on it to
+/// the correction pages (`scale_teams/{id}`) — the reconstructed
+/// application.js tells us those pages carry the evaluation grid
+/// (`.scale-section-answers`, `[data-question-kind]`, `[data-star-range]`,
+/// `.skillSummary`, `[data-checkin-id]`); this verifies it against the
+/// live DOM so the grid can be modeled.
+#[tokio::test]
+#[ignore]
+async fn dump_scale_team_pages() {
+    let api = api_from_persisted_session().await;
+    let html = api.project_mine_html("codexion").await.expect("mine html");
+    std::fs::write("/tmp/mine-codexion.html", &html).expect("write dump");
+    let mut links: Vec<String> = Vec::new();
+    for part in html.split(r#"href=""#).skip(1) {
+        let path = part.split('"').next().unwrap_or_default();
+        if path.contains("scale_teams") && !links.iter().any(|l| l == path) {
+            links.push(path.to_owned());
+        }
+    }
+    println!("scale-team links: {links:#?}");
+    for (index, path) in links.iter().take(3).enumerate() {
+        let url = if path.starts_with("http") {
+            path.clone()
+        } else {
+            format!("{}{}", crate::api::PROJECTS_BASE, path)
+        };
+        let resp = api.http.get(&url).send().await.expect("fetch page");
+        let page = resp.text().await.unwrap_or_default();
+        let name = format!("/tmp/scale-team-{index}.html");
+        std::fs::write(&name, &page).expect("write dump");
+        println!("wrote {name} ({} bytes) for {path}", page.len());
+    }
+}
+
+/// Fetch the scale-team show page (`/scale_teams/{id}`) — the correction
+/// grid itself — for a finished evaluation, to verify the reconstructed
+/// bundle's selectors (`.scale-section-answers`, `[data-question-kind]`,
+/// `[data-star-range]`, `.skillSummary`, `[data-checkin-id]`) against the
+/// live DOM.
+#[tokio::test]
+#[ignore]
+async fn dump_scale_team_show_page() {
+    let api = api_from_persisted_session().await;
+    let Some(id) = std::env::var("CLI42_SCALE_TEAM_ID")
+        .ok()
+        .or_else(|| {
+            let html = std::fs::read_to_string("/tmp/mine-codexion.html").ok()?;
+            let start = html.find("/scale_teams/")? + "/scale_teams/".len();
+            let digits: String = html[start..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            digits.parse().ok()
+        })
+    else {
+        panic!("no scale team id available");
+    };
+    let url = format!("{}/scale_teams/{id}", crate::api::PROJECTS_BASE);
+    let resp = api.http.get(&url).send().await.expect("fetch show page");
+    let page = resp.text().await.unwrap_or_default();
+    std::fs::write("/tmp/scale-team-show.html", &page).expect("write dump");
+    println!("wrote /tmp/scale-team-show.html ({} bytes) for {url}", page.len());
+}
+
+/// Evaluation specifics on the codexion `mine` page: defense date, flag
+/// reason on the flagged attempt, pending-feedback link + scale-team id,
+/// and the project-wide schedule from `/{slug}/scale_teams`.
+#[tokio::test]
+#[ignore]
+async fn evaluation_specifics_parse() {
+    let api = api_from_persisted_session().await;
+    let mine = api.project_mine("codexion", true).await.expect("mine");
+
+    // The most recent attempt was flagged (0%, empty_work) and its
+    // feedback form is still pending.
+    let flagged = mine
+        .evaluations
+        .iter()
+        .find(|e| e.flag_reason.is_some())
+        .expect("codexion has one flagged attempt");
+    assert_eq!(
+        flagged.flag_reason.as_deref(),
+        Some("empty_work"),
+        "flag reason scraped from the danger folder icon"
+    );
+    assert!(
+        flagged.evaluated_at.is_some(),
+        "defense date scraped from data-long-date"
+    );
+    let feedback_url = flagged
+        .feedback_url
+        .as_deref()
+        .expect("pending feedback link");
+    assert!(
+        feedback_url.contains("/scale_teams/") && feedback_url.ends_with("/feedbacks/new"),
+        "feedback url shape: {feedback_url}"
+    );
+    assert!(flagged.scale_team_id.is_some(), "scale-team id parsed");
+
+    // Passing attempts carry dates too, and no flag.
+    for evaluation in mine.evaluations.iter() {
+        assert!(evaluation.evaluated_at.is_some(), "attempt has a date");
+        if evaluation.flag_reason.is_none() {
+            assert!(
+                evaluation.result.as_deref().is_some_and(|r| r.ends_with('%')),
+                "unflagged attempt has a percentage result"
+            );
+        }
+    }
+
+    // Schedule page: recent bookings with corrector, corrected and date.
+    let schedule = api
+        .project_schedule("codexion", true)
+        .await
+        .expect("schedule");
+    assert!(schedule.len() >= 20, "a busy project fills page 1");
+    for entry in schedule.iter() {
+        assert!(entry.corrector.is_some(), "row has a corrector");
+        assert!(entry.corrected.is_some(), "row has a corrected");
+        assert!(entry.scheduled_at.is_some(), "row has a date");
+    }
+    let graded = schedule
+        .iter()
+        .find(|e| e.result.is_some())
+        .expect("graded row on page 1");
+    println!(
+        "graded row: {} -> {} {} {:?}",
+        graded.corrector.clone().unwrap_or_default(),
+        graded.corrected.clone().unwrap_or_default(),
+        graded.result.clone().unwrap_or_default(),
+        graded.feedback
+    );
+    assert!(
+        schedule.iter().any(|e| e.feedback.is_some()),
+        "corrected feedback summaries parse (tooltip title)"
+    );
+}
+
 /// What does the live intra graph say about Codexion right now?
 #[tokio::test]
 #[ignore]
@@ -327,10 +480,6 @@ async fn codexion_state_now() {
             );
         }
     }
-}
-
-fn write_verdict(error: &crate::api::ApiError) -> String {
-    error.to_string()
 }
 
 /// Emergency cleanup: list and remove any open hours the probes left behind.
@@ -454,3 +603,4 @@ async fn probe_booking_rules() {
             .collect::<Vec<_>>()
     );
 }
+

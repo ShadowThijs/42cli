@@ -320,6 +320,33 @@ pub struct ProjectEvaluation {
     pub correctors: Vec<String>,
     pub result: Option<String>,
     pub comment: Option<String>,
+    /// When the defense took place (`data-long-date`, RFC 3339).
+    pub evaluated_at: Option<String>,
+    /// Flag reason when the attempt was flagged (`empty_work`, `cheat`, …).
+    pub flag_reason: Option<String>,
+    /// Feedback form URL while feedback on this correction is still pending.
+    pub feedback_url: Option<String>,
+    /// Scale-team id (parsed from the feedback URL) — same id the
+    /// correction grid at `/scale_teams/{id}/edit` lives under.
+    pub scale_team_id: Option<u64>,
+}
+
+/// One row of a project's evaluation schedule (`/{slug}/scale_teams`):
+/// who corrects whom, when, and the outcome once it happened.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectScheduleEntry {
+    pub corrector: Option<String>,
+    /// Corrected login (team entries render as `login's group` on the page;
+    /// we keep the bare login from the tooltip attribute).
+    pub corrected: Option<String>,
+    /// Raw scheduled time as printed, e.g. `August 19, 2026 21:45`.
+    pub scheduled_at: Option<String>,
+    /// Final mark once graded (`100 %`); `None` while still upcoming.
+    pub result: Option<String>,
+    /// Corrector's closing comment.
+    pub comment: Option<String>,
+    /// Corrected's feedback summary tooltip (`Nice: 4 / 4; …`).
+    pub feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

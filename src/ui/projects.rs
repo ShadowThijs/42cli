@@ -202,19 +202,46 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(Span::styled("evaluations", theme::title())));
                 for (index, evaluation) in mine.evaluations.iter().enumerate() {
                     let result = evaluation.result.as_deref().unwrap_or("—");
-                    let style = if result.contains("fail") {
+                    let flagged = evaluation.flag_reason.is_some();
+                    let style = if flagged || result.contains("fail") {
                         theme::error()
                     } else {
                         theme::good()
                     };
+                    let when = evaluation
+                        .evaluated_at
+                        .as_deref()
+                        .and_then(util::parse_datetime)
+                        .map(|at| at.format("%d %b %Y %H:%M").to_string())
+                        .unwrap_or_default();
                     lines.push(Line::from(vec![
                         Span::styled(format!("  {:>2} ", index + 1), theme::muted()),
                         Span::styled(format!("{result:<8}"), style),
                         Span::styled(
-                            format!("by {}", evaluation.correctors.join(", ")),
+                            format!(
+                                "by {}{}",
+                                evaluation.correctors.join(", "),
+                                if when.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" on {when}")
+                                }
+                            ),
                             theme::text(),
                         ),
                     ]));
+                    if let Some(reason) = &evaluation.flag_reason {
+                        lines.push(Line::from(Span::styled(
+                            format!("      flagged: {reason}"),
+                            theme::error(),
+                        )));
+                    }
+                    if evaluation.feedback_url.is_some() {
+                        lines.push(Line::from(Span::styled(
+                            "      feedback pending (web)",
+                            theme::muted(),
+                        )));
+                    }
                     if let Some(comment) = &evaluation.comment {
                         lines.push(Line::from(Span::styled(
                             format!("      “{}”", truncate(comment, 64)),
@@ -267,6 +294,67 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         _ => {}
     }
 
+    // Project evaluation schedule (`/{slug}/scale_teams`): who corrects
+    // whom and when — my own defenses first and highlighted.
+    if !slug.is_empty() {
+        match app.projects.schedule.get(&slug) {
+            Some(Loadable::Ready(schedule)) if !schedule.is_empty() => {
+                let me = app
+                    .dash
+                    .summary
+                    .data()
+                    .and_then(|summary| summary.login.clone());
+                let mut sorted = schedule.clone();
+                sorted.sort_by_key(|entry| {
+                    let mine = me
+                        .as_deref()
+                        .is_some_and(|me| {
+                            entry.corrector.as_deref() == Some(me)
+                                || entry.corrected.as_deref() == Some(me)
+                        });
+                    (!mine, entry.scheduled_at.clone())
+                });
+                lines.push(Line::from(Span::styled(
+                    "evaluation schedule",
+                    theme::title(),
+                )));
+                for entry in sorted.iter().take(SCHEDULE_ROWS) {
+                    let mine = me
+                        .as_deref()
+                        .is_some_and(|me| {
+                            entry.corrector.as_deref() == Some(me)
+                                || entry.corrected.as_deref() == Some(me)
+                        });
+                    let style = if mine {
+                        theme::selected()
+                    } else {
+                        theme::muted()
+                    };
+                    let when = entry.scheduled_at.as_deref().unwrap_or("unscheduled");
+                    let outcome = match entry.result.as_deref() {
+                        Some(result) => result,
+                        None if mine => "yours",
+                        None => "",
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  · {} → {} · {} {}",
+                            entry.corrector.as_deref().unwrap_or("?"),
+                            entry.corrected.as_deref().unwrap_or("?"),
+                            when,
+                            outcome
+                        ),
+                        style,
+                    )));
+                }
+            }
+            Some(Loadable::Loading) => {
+                lines.push(widgets::loading_line("loading schedule…", app.tick))
+            }
+            _ => {}
+        }
+    }
+
     let downloading = app.projects.downloading.keys().cloned().collect::<Vec<_>>();
     if !downloading.is_empty() {
         lines.push(widgets::loading_line(
@@ -287,6 +375,8 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
 /// Wrapped-line budget so team + attachments stay visible.
 const RULES_LINES: usize = 3;
 const DESCRIPTION_LINES: usize = 6;
+/// Rows of the evaluation schedule shown in the detail pane.
+const SCHEDULE_ROWS: usize = 6;
 
 // -------------------------------------------------------- clone prompt ----
 
@@ -742,7 +832,18 @@ pub fn lazy_load_mine(app: &mut App) {
     };
     if !app.projects.mine.contains_key(&slug) {
         app.projects.mine.insert(slug.clone(), Loadable::Loading);
-        app.send(crate::bus::Command::LoadMine { slug, fresh: false });
+        app.send(crate::bus::Command::LoadMine {
+            slug: slug.clone(),
+            fresh: false,
+        });
+    }
+    // The evaluation schedule rides along once the mine page is loading —
+    // same "attached project" eligibility as above.
+    if !app.projects.schedule.contains_key(&slug) {
+        app.projects
+            .schedule
+            .insert(slug.clone(), Loadable::Loading);
+        app.send(crate::bus::Command::LoadSchedule { slug, fresh: false });
     }
 }
 
