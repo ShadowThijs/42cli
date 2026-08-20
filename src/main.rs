@@ -10,8 +10,10 @@ mod event;
 mod input;
 mod msg;
 mod pdfmd;
+mod secure;
 mod state;
 mod ui;
+mod update;
 mod util;
 mod worker;
 
@@ -27,13 +29,20 @@ fn main() -> Result<()> {
     // Subcommands that run without the TUI.
     match std::env::args().nth(1).as_deref() {
         Some("install") => return install_userwide(),
+        Some("--version") | Some("-v") | Some("version") => {
+            println!("42cli {}", update::VERSION);
+            return Ok(());
+        }
+        Some("update") => return run_update(),
         Some("help") | Some("--help") | Some("-h") => {
             println!("42cli — Ratatui client for the 42 intranet and 42 Belgium slots");
             println!();
-            println!("Usage: cli42 [install]");
+            println!("Usage: cli42 [command]");
             println!();
             println!("  (no args)   start the TUI");
             println!("  install     copy this binary to ~/.local/bin and check PATH");
+            println!("  update      fetch latest release from GitHub and self-replace");
+            println!("  --version   print baked version");
             return Ok(());
         }
         Some(other) => {
@@ -42,14 +51,44 @@ fn main() -> Result<()> {
         None => {}
     }
 
+    // Cheap auto-update check: if a cached check says newer exists, remember it for banner.
+    // Full network check runs in background thread without blocking startup.
+    let cached_update = update::cached_update_available();
+
     let cookies = restore_cookies();
     let api = Arc::new(api::Api::new(cookies.clone(), None)?);
     let (cmd_tx, msg_rx, worker) = bus::spawn_worker(api);
     let mut app = app::App::new(cmd_tx);
+    if let Some(tag) = cached_update {
+        app.update_available = Some(tag);
+    }
+    // Background update check (non-blocking) — writes sentinel file polled by event loop.
+    std::thread::spawn(|| {
+        if let Some(tag) = update::check_for_update_blocking() {
+            let path = config::cache_dir().join("update_available");
+            let _ = std::fs::write(path, tag);
+        }
+    });
 
     // Try a stored session before showing the login form.
+    // Optimistic: if a vault exists, presume token valid and drop straight to Main
+    // with cached profile data, correcting in background after verification.
     if let Some(stored) = config::load_session() {
-        app.login.state = state::Loadable::Loading;
+        // Hydrate from cache before any network
+        app.hydrate_from_cache();
+        // Decide screen: if we have at least a cached summary, go Main optimistically
+        if app.dash.summary.data().is_some() {
+            app.screen = app::Screen::Main;
+            app.tab = app::Tab::Dashboard;
+            app.set_status(format!("welcome back, {}", stored.login));
+        } else {
+            // No cached profile — show loading but still go Main to avoid login flash
+            app.screen = app::Screen::Main;
+            app.tab = app::Tab::Dashboard;
+            app.dash.summary = state::Loadable::Loading;
+            // Keep login state loading for fallback
+            app.login.state = state::Loadable::Loading;
+        }
         app.send(bus::Command::Restore(stored));
     }
 
@@ -116,5 +155,17 @@ fn restore_cookies() -> Arc<cookies::PersistentCookieStore> {
             chrono::Utc::now().timestamp(),
         )),
         None => Arc::new(cookies::PersistentCookieStore::new()),
+    }
+}
+
+fn run_update() -> Result<()> {
+    println!("current version: {}", update::VERSION);
+    println!("checking for updates...");
+    match update::perform_update() {
+        Ok(msg) => {
+            println!("{msg}");
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("update failed: {e}"),
     }
 }

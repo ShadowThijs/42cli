@@ -2,9 +2,9 @@
 
 pub mod clusters;
 pub mod dashboard;
-pub mod markdown;
 pub mod help;
 pub mod login;
+pub mod markdown;
 pub mod projects;
 pub mod search;
 pub mod slots;
@@ -123,6 +123,12 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or(0);
     if unread > 0 {
         spans.push(Span::styled(format!(" ✉ {unread} "), theme::warn()));
+    }
+    if let Some(tag) = &app.update_available {
+        spans.push(Span::styled(
+            format!(" ⟡ update {tag} available — run cli42 update "),
+            theme::warn(),
+        ));
     }
     let hints = match app.tab {
         Tab::Dashboard => "F1-F6 tabs · n notifications · ? help",

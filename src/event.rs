@@ -56,6 +56,18 @@ pub fn run(terminal: &mut Term, app: &mut App, messages: MsgStream) -> std::io::
             }
         }
 
+        // 1b. Poll for background update sentinel (written by update thread).
+        if app.update_available.is_none() && app.tick.is_multiple_of(4) {
+            let path = crate::config::cache_dir().join("update_available");
+            if let Ok(tag) = std::fs::read_to_string(&path) {
+                let tag = tag.trim().to_owned();
+                if !tag.is_empty() && tag != crate::update::VERSION {
+                    app.update_available = Some(tag);
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+
         // 2. Draw.
         terminal.draw(|frame| ui::draw(frame, app))?;
 
