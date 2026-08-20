@@ -80,6 +80,14 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
         }
 
         Command::LoadUser { login } => load_user(api, tx, login).await,
+        Command::LoadUserMine { login, slug, fresh } => {
+            let result = api.project_mine_for_user(&slug, &login, fresh).await;
+            let _ = tx.send(Msg::UserMine {
+                login,
+                slug,
+                result,
+            });
+        }
 
         Command::LoadEvent { id } => {
             let result = api.event_detail(id).await;
@@ -371,7 +379,7 @@ async fn load_user(api: Arc<Api>, tx: Sender<Msg>, login: String) {
         let result = api.locations_stats(&login, false).await;
         Msg::UserLogtime { login, result }
     });
-    spawn_job(&api, &tx, login, |api, login| async move {
+    spawn_job(&api, &tx, login.clone(), |api, login| async move {
         let patroning = api.user_patroning(&login).await;
         let patroned = api.user_patroned(&login).await;
         Msg::UserPatrons {
@@ -379,6 +387,92 @@ async fn load_user(api: Arc<Api>, tx: Sender<Msg>, login: String) {
             patroning,
             patroned,
         }
+    });
+    // Extra info matching dashboard: marked/ongoing + pace + campus
+    // For Piscine students (e.g. mtorfs, cursus 65 `c-piscine-antwerp`)
+    // profile-v3 requests `?cursus_id=65` not `21`. We therefore resolve
+    // the user's actual cursus list first and fetch for every cursus id,
+    // merging results (covers users with both Piscine + 42cursus).
+    spawn_job(&api, &tx, login.clone(), |api, login| async move {
+        let result = async {
+            let profile = api.user_profile(&login, false).await?;
+            let id = profile.id.ok_or_else(|| ApiError::Other("user has no id".into()))?;
+            let cursus_list = api.user_cursus(id, false).await.unwrap_or_default();
+            let ids: Vec<u32> = if cursus_list.is_empty() {
+                vec![21, 65]
+            } else {
+                cursus_list.iter().filter_map(|c| c.id).collect()
+            };
+            let mut merged: Vec<MarkedProject> = Vec::new();
+            for cid in ids {
+                if let Ok(mut v) = api.marked_projects(&login, cid).await {
+                    merged.append(&mut v);
+                }
+            }
+            // Deduplicate by slug when same project appears in multiple cursus
+            let mut seen = std::collections::HashSet::new();
+            merged.retain(|p| {
+                let key = p
+                    .display_slug()
+                    .unwrap_or("")
+                    .to_owned()
+                    + &p.final_mark.unwrap_or(0).to_string();
+                seen.insert(key)
+            });
+            Ok::<Vec<MarkedProject>, ApiError>(merged)
+        }
+        .await;
+        Msg::UserMarked { login, result }
+    });
+    spawn_job(&api, &tx, login.clone(), |api, login| async move {
+        let result = async {
+            let profile = api.user_profile(&login, false).await?;
+            let id = profile.id.ok_or_else(|| ApiError::Other("user has no id".into()))?;
+            let cursus_list = api.user_cursus(id, false).await.unwrap_or_default();
+            let ids: Vec<u32> = if cursus_list.is_empty() {
+                vec![21, 65]
+            } else {
+                cursus_list.iter().filter_map(|c| c.id).collect()
+            };
+            let mut merged: Vec<OngoingProject> = Vec::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for cid in ids {
+                if let Ok(mut v) = api.ongoing_projects(id, cid).await {
+                    for p in v.drain(..) {
+                        if let Some(slug) = &p.project_slug {
+                            if !seen.insert(slug.clone()) {
+                                continue;
+                            }
+                        }
+                        merged.push(p);
+                    }
+                }
+            }
+            Ok::<Vec<OngoingProject>, ApiError>(merged)
+        }
+        .await;
+        Msg::UserOngoing { login, result }
+    });
+    spawn_job(&api, &tx, login.clone(), |api, login| async move {
+        let result = match api.user_profile(&login, false).await {
+            Ok(profile) if profile.id.is_some() => {
+                let id = profile.id.unwrap_or_default();
+                api.pace_profile(id).await
+            }
+            Ok(_) => Err(ApiError::Other("user has no id".into())),
+            Err(error) => Err(error),
+        };
+        Msg::UserPace { login, result }
+    });
+    spawn_job(&api, &tx, login, |api, login| async move {
+        let result = match api.user_profile(&login, false).await {
+            Ok(profile) if profile.id.is_some() => {
+                api.user_campus(profile.id.unwrap_or_default()).await
+            }
+            Ok(_) => Err(ApiError::Other("user has no id".into())),
+            Err(error) => Err(error),
+        };
+        Msg::UserCampus { login, result }
     });
 }
 
@@ -438,7 +532,33 @@ async fn marked_of(api: &Arc<Api>) -> Result<Vec<MarkedProject>, ApiError> {
     if login.is_empty() {
         return Ok(Vec::new());
     }
-    api.marked_projects(&login, 21).await
+    // Piscine students (e.g. mtorfs) have cursus 65, not 21 — use the
+    // actual primary cursus from the user's cursus list.
+    let (cursus, _) = graph_context(api).await;
+    let me = api.me_summary(false).await.ok().and_then(|m| m.id);
+    if let Some(id) = me {
+        if let Ok(list) = api.user_cursus(id, false).await {
+            let ids: Vec<u32> = list.iter().filter_map(|c| c.id).collect();
+            if !ids.is_empty() {
+                let mut merged = Vec::new();
+                for cid in &ids {
+                    if let Ok(mut v) = api.marked_projects(&login, *cid).await {
+                        merged.append(&mut v);
+                    }
+                }
+                if !merged.is_empty() {
+                    let mut seen = std::collections::HashSet::new();
+                    merged.retain(|p| {
+                        p.display_slug()
+                            .map(|s| seen.insert(s.to_owned()))
+                            .unwrap_or(true)
+                    });
+                    return Ok(merged);
+                }
+            }
+        }
+    }
+    api.marked_projects(&login, cursus).await
 }
 
 /// `git clone` into `dest`, optionally under an explicit folder name —

@@ -64,6 +64,11 @@ pub enum Command {
     LoadUser {
         login: String,
     },
+    LoadUserMine {
+        login: String,
+        slug: String,
+        fresh: bool,
+    },
     // Event detail popup opened from a notification link.
     LoadEvent {
         id: u32,
@@ -174,6 +179,27 @@ pub enum Msg {
         login: String,
         patroning: Result<Vec<PatronUser>, ApiError>,
         patroned: Result<Vec<PatronUser>, ApiError>,
+    },
+    UserMarked {
+        login: String,
+        result: Result<Vec<MarkedProject>, ApiError>,
+    },
+    UserOngoing {
+        login: String,
+        result: Result<Vec<OngoingProject>, ApiError>,
+    },
+    UserPace {
+        login: String,
+        result: Result<PaceProfile, ApiError>,
+    },
+    UserCampus {
+        login: String,
+        result: Result<Vec<Campus>, ApiError>,
+    },
+    UserMine {
+        login: String,
+        slug: String,
+        result: Result<ProjectMine, ApiError>,
     },
 
     Clusters(Result<Vec<ClusterSeat>, ApiError>),

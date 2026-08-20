@@ -78,11 +78,24 @@ impl Api {
         user_id: u32,
         cursus_id: u32,
     ) -> ApiResult<Vec<super::OngoingProject>> {
-        self.authed_get(&format!(
-            "{}/users/{user_id}/projects/ongoing?cursus_id={cursus_id}",
-            super::INTRAPY_BASE
-        ))
-        .await
+        let key = format!("users/{user_id}/ongoing/{cursus_id}");
+        if let Some(cached) = self.cache.get(&key, TTL_PROFILE) {
+            return Ok(cached);
+        }
+        if let Some((cached, _age)) = self.cache.get_with_age::<Vec<super::OngoingProject>>(&key) {
+            // stale-while-revalidate: serve even if expired, background will refresh via fresh=true
+            if !cached.is_empty() {
+                return Ok(cached);
+            }
+        }
+        let value: Vec<super::OngoingProject> = self
+            .authed_get(&format!(
+                "{}/users/{user_id}/projects/ongoing?cursus_id={cursus_id}",
+                super::INTRAPY_BASE
+            ))
+            .await?;
+        self.cache.put(&key, &value);
+        Ok(value)
     }
 
     pub async fn marked_projects(
@@ -90,11 +103,23 @@ impl Api {
         login: &str,
         cursus_id: u32,
     ) -> ApiResult<Vec<super::MarkedProject>> {
-        self.authed_get(&format!(
-            "{}/users/{login}/projects/marked?cursus_id={cursus_id}",
-            super::INTRAPY_BASE
-        ))
-        .await
+        let key = format!("users/{login}/marked/{cursus_id}");
+        if let Some(cached) = self.cache.get(&key, TTL_PROFILE) {
+            return Ok(cached);
+        }
+        if let Some((cached, _age)) = self.cache.get_with_age::<Vec<super::MarkedProject>>(&key)
+            && !cached.is_empty()
+        {
+            return Ok(cached);
+        }
+        let value: Vec<super::MarkedProject> = self
+            .authed_get(&format!(
+                "{}/users/{login}/projects/marked?cursus_id={cursus_id}",
+                super::INTRAPY_BASE
+            ))
+            .await?;
+        self.cache.put(&key, &value);
+        Ok(value)
     }
 
     pub async fn my_events(&self, fresh: bool) -> ApiResult<Vec<super::IntraEvent>> {

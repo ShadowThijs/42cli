@@ -39,7 +39,22 @@ impl Api {
 
     /// Pace profile: milestones, deadlines and pace percentage.
     pub async fn pace_profile(&self, user_id: u32) -> ApiResult<super::PaceProfile> {
-        self.authed_get(&format!("{}/users/{user_id}/profile", super::PACE_BASE))
-            .await
+        let key = format!("pace/{user_id}");
+        if let Some(cached) = self
+            .cache
+            .get::<super::PaceProfile>(&key, Duration::from_secs(30 * 60))
+        {
+            return Ok(cached);
+        }
+        if let Some((cached, _age)) = self.cache.get_with_age::<super::PaceProfile>(&key)
+            && (cached.is_activated || cached.milestone.is_some())
+        {
+            return Ok(cached);
+        }
+        let value: super::PaceProfile = self
+            .authed_get(&format!("{}/users/{user_id}/profile", super::PACE_BASE))
+            .await?;
+        self.cache.put(&key, &value);
+        Ok(value)
     }
 }

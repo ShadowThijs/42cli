@@ -135,7 +135,7 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         Tab::Projects => "/ filter · ←→ segment · Tab pane · d download · v view subject",
         Tab::Slots => "p/o mode · ←→ project · Enter book · Tab form · s sync",
         Tab::Search => "type to search · Enter open profile",
-        Tab::User => "Esc back to search",
+        Tab::User => "↑↓/Tab select · Enter details · Esc back",
         Tab::Clusters => "↑↓ cluster",
     };
     let mut line = Line::from(spans);

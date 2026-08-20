@@ -188,6 +188,69 @@ impl Api {
         Ok(mine)
     }
 
+    /// Scrape `projects.intra.42.fr/{slug}/{login}/` for another user's team
+    /// — same parser as `/{slug}/mine`, different URL. Used for searched users.
+    pub async fn project_mine_for_user(
+        &self,
+        slug: &str,
+        login: &str,
+        fresh: bool,
+    ) -> ApiResult<super::ProjectMine> {
+        let key = format!("mine_user/{slug}/{login}");
+        if !fresh {
+            if let Some(cached) = self.cache.get::<super::ProjectMine>(&key, TTL_MINE) {
+                return Ok(cached);
+            }
+            if let Some((cached, age)) = self.cache.get_with_age::<super::ProjectMine>(&key) {
+                let is_done = cached.status.as_deref() == Some("finished")
+                    || cached.status.as_deref() == Some("done")
+                    || !cached.evaluations.is_empty();
+                if is_done && age < TTL_MINE_DONE {
+                    return Ok(cached);
+                }
+                if age < Duration::from_secs(30 * 60) {
+                    return Ok(cached);
+                }
+            }
+        }
+        let fetch = || async {
+            let resp = self
+                .http
+                .get(format!("{}/{slug}/{login}/", super::PROJECTS_BASE))
+                .send()
+                .await?;
+            let status = resp.status();
+            if !status.is_success() {
+                return Err(ApiError::from_response("project user mine", resp).await);
+            }
+            if resp
+                .url()
+                .host_str()
+                .is_some_and(|host| host.contains("signin"))
+            {
+                return Err(ApiError::SessionExpired);
+            }
+            let html = resp.text().await.unwrap_or_default();
+            parse_project_mine(&html).ok_or_else(|| ApiError::Parse {
+                endpoint: "project user mine",
+                detail: format!("could not parse `{slug}/{login}`"),
+            })
+        };
+        let mine = match fetch().await {
+            Ok(mine) => mine,
+            Err(ApiError::SessionExpired) => {
+                if super::auth::bootstrap_intra_session(self).await {
+                    fetch().await?
+                } else {
+                    return Err(ApiError::SessionExpired);
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        self.cache.put(&key, &mine);
+        Ok(mine)
+    }
+
     /// Scrape `projects.intra.42.fr/{slug}/scale_teams` — the project's
     /// evaluation schedule: who corrects whom and when, plus each attempt's
     /// result and the corrected's feedback once it happened. Page 1 holds

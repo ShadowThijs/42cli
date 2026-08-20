@@ -92,13 +92,34 @@ pub struct MarkedProject {
     pub project: Option<ProjectRef>,
     pub status: Option<String>,
     pub final_mark: Option<u32>,
-    #[serde(default)]
+    #[serde(default, alias = "is_validated")]
     pub validated: Option<bool>,
     pub marked_at: Option<String>,
     pub occurrence: Option<u32>,
+    /// Flat fields used by `intrapy` for other-user marked (top-level
+    /// `project_name`/`project_slug` instead of nested `project`).
+    pub project_name: Option<String>,
+    pub project_slug: Option<String>,
     /// Raw payload kept for the detail pane.
     #[serde(flatten)]
     pub extra: serde_json::Value,
+}
+
+impl MarkedProject {
+    pub fn display_name(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .and_then(|p| p.name.as_deref())
+            .or(self.project_name.as_deref())
+            .or_else(|| self.extra.get("project_name").and_then(|v| v.as_str()))
+    }
+    pub fn display_slug(&self) -> Option<&str> {
+        self.project
+            .as_ref()
+            .and_then(|p| p.slug.as_deref())
+            .or(self.project_slug.as_deref())
+            .or_else(|| self.extra.get("project_slug").and_then(|v| v.as_str()))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

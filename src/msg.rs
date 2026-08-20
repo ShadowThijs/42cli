@@ -152,6 +152,35 @@ impl App {
                     self.user.patroned.set(patroned);
                 }
             }
+            Msg::UserMarked { login, result } => {
+                if self.user.login == login {
+                    self.user.marked.set(result);
+                }
+            }
+            Msg::UserOngoing { login, result } => {
+                if self.user.login == login {
+                    self.user.ongoing.set(result);
+                }
+            }
+            Msg::UserPace { login, result } => {
+                if self.user.login == login {
+                    self.user.pace.set(result);
+                }
+            }
+            Msg::UserCampus { login, result } => {
+                if self.user.login == login {
+                    self.user.campuses.set(result);
+                }
+            }
+            Msg::UserMine {
+                login,
+                slug,
+                result,
+            } => {
+                if self.user.login == login {
+                    self.user.user_mines.entry(slug).or_default().set(result);
+                }
+            }
 
             // ----------------------------------------------- clusters ----
             Msg::Clusters(result) => {

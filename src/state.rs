@@ -264,6 +264,32 @@ pub struct UserView {
     pub logtime: Loadable<LocationStats>,
     pub patroning: Loadable<Vec<PatronUser>>,
     pub patroned: Loadable<Vec<PatronUser>>,
+    pub marked: Loadable<Vec<MarkedProject>>,
+    pub ongoing: Loadable<Vec<OngoingProject>>,
+    pub pace: Loadable<PaceProfile>,
+    pub campuses: Loadable<Vec<Campus>>,
+    /// Per-project team/evaluations for this user (`/{slug}/{login}/`).
+    pub user_mines: std::collections::HashMap<String, Loadable<ProjectMine>>,
+    /// Selection inside the combined marked/ongoing lists.
+    pub project_sel: usize,
+    pub project_focus: UserProjectFocus,
+    /// Popup showing extra project details (mirrors `projects.intra.42.fr/{slug}/{login}/`).
+    pub popup: Option<UserPopup>,
+}
+
+#[derive(Debug)]
+pub struct UserPopup {
+    pub slug: String,
+    pub scroll: u16,
+    pub view_height: std::cell::Cell<u16>,
+    pub total_height: std::cell::Cell<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UserProjectFocus {
+    #[default]
+    Ongoing,
+    Marked,
 }
 
 // ---------------------------------------------------------- clusters ----
