@@ -46,6 +46,13 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         ui::projects::handle_editor_prompt_key(app, key);
         return Action::Continue;
     }
+    // User-project popup is also an overlay: it must swallow global
+    // shortcuts like `q` (quit) while open — `q` should only close the
+    // popup, not the whole TUI (otherwise `q` propagates and exits).
+    if app.user.popup.is_some() {
+        ui::user::handle_key(app, key);
+        return Action::Continue;
+    }
 
     if app.screen == Screen::Login {
         return ui::login::handle_key(app, key);
