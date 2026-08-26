@@ -64,6 +64,36 @@ impl App {
             Msg::MyEvents(result) => self.dash.events.set(result),
             Msg::MyNotifications(result) => self.dash.notifications.set(result),
             Msg::MyScaleTeams(result) => self.dash.scale_teams.set(result),
+            Msg::MyEvalSlots(result) => self.dash.eval_slots.set(result),
+            Msg::EvalFormLoaded { id, result } => {
+                if let Some(view) = &mut self.eval_view
+                    && view.scale_team_id == id
+                {
+                    match result {
+                        Ok(form) => view.apply_form(form),
+                        Err(error) => view.form = Loadable::Failed(error.to_string()),
+                    }
+                }
+            }
+            Msg::EvalSubmitted { id, result } => {
+                if let Some(view) = &mut self.eval_view {
+                    view.submitting = false;
+                    if view.scale_team_id == id {
+                        match result {
+                            Ok(_target) => {
+                                self.eval_view = None;
+                                self.set_status("evaluation submitted ✓");
+                                // The duty list should drop it and the
+                                // scale_team may have changed server-side.
+                                self.send(crate::bus::Command::LoadDashboard { fresh: false });
+                            }
+                            Err(error) => {
+                                self.set_status(format!("evaluation failed: {error}"));
+                            }
+                        }
+                    }
+                }
+            }
             Msg::MyLogtime(result) => self.dash.logtime.set(result),
             Msg::MyPace(result) => self.dash.pace.set(result),
             Msg::MyAttendance(result) => self.dash.attendance.set(result),

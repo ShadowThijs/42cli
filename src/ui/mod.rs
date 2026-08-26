@@ -2,6 +2,7 @@
 
 pub mod clusters;
 pub mod dashboard;
+pub mod eval;
 pub mod help;
 pub mod login;
 pub mod markdown;
@@ -54,6 +55,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     if app.subject_view.is_some() {
         subject::draw(frame, app, area);
+        return;
+    }
+    if app.eval_view.is_some() {
+        eval::draw(frame, app, area);
         return;
     }
     if app.notifications_open {

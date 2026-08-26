@@ -2,15 +2,17 @@
 //! evaluation points, pace, logtime chart, attendance, achievements,
 //! upcoming events and evaluation duties.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::theme;
 use super::widgets;
+use crate::api::models::{ScaleTeam, Slot};
+use crate::api::slots::parse_slot_time;
 use crate::app::App;
 use crate::input::Action;
 use crate::state::Loadable;
@@ -373,42 +375,282 @@ fn draw_right(frame: &mut Frame, app: &App, area: Rect) {
         &app.dash.scale_teams,
         app.tick,
         |frame, area, teams| {
-            let future: Vec<Line> = teams
-                .iter()
-                .filter(|team| {
-                    team.begin_at
-                        .as_deref()
-                        .and_then(util::parse_datetime)
-                        .is_some_and(|at| at > chrono::Local::now())
-                })
-                .take(area.height as usize)
-                .map(|team| {
-                    let correcteds: Vec<String> = team
-                        .correcteds
-                        .iter()
-                        .filter_map(|corrected| corrected.login.clone())
-                        .collect();
-                    Line::from(vec![
-                        Span::styled(
-                            format!(
-                                "{}  ",
-                                util::fmt_datetime(team.begin_at.as_deref().unwrap_or("—"))
-                            ),
-                            Style::default().fg(theme::WARN),
-                        ),
-                        Span::styled(correcteds.join(", "), theme::text()),
-                    ])
-                })
-                .collect();
-            if future.is_empty() {
+            let now = chrono::Local::now();
+            let empty = Vec::new();
+            let slots = app.dash.eval_slots.data().unwrap_or(&empty);
+            let duties = eval_duties(teams, slots, now);
+            if duties.is_empty() {
                 widgets::hint(frame, area, "none upcoming");
-            } else {
-                frame.render_widget(Paragraph::new(future), area);
+                return;
             }
+            let lines: Vec<Line> = duties
+                .iter()
+                .enumerate()
+                .take(area.height as usize)
+                .map(|(index, duty)| duty_line(duty, now, index == app.dash.duty_sel))
+                .collect();
+            frame.render_widget(Paragraph::new(lines), area);
         },
     );
 }
 
-pub fn handle_key(_app: &mut App, _key: KeyEvent) -> Action {
+// ---------------------------------------------------------- evaluations ----
+
+/// How far ahead the panel reveals who will be evaluated. A booked open
+/// hour only materializes as an intra scale_team (carrying the project
+/// and the corrected) shortly before it begins.
+const REVEAL_MINUTES: i64 = 15;
+
+/// One upcoming evaluation to give, from either source.
+struct EvalDuty {
+    at: chrono::DateTime<chrono::Local>,
+    /// Intra scale-team id — the evaluation form's address. `None` for a
+    /// booked open hour whose team has not materialized yet.
+    scale_team_id: Option<u64>,
+    /// `None` for a booked open hour whose intra team has not
+    /// materialized yet — the slot feed has no project.
+    project: Option<String>,
+    /// Logins of the students to evaluate.
+    logins: Vec<String>,
+}
+
+/// Merge both duty sources into one time-sorted list: intra scale_teams
+/// (upcoming or still running) and booked open hours whose scale_team has
+/// not appeared yet. Finished duties are dropped.
+fn eval_duties(
+    teams: &[ScaleTeam],
+    slots: &[Slot],
+    now: chrono::DateTime<chrono::Local>,
+) -> Vec<EvalDuty> {
+    let mut duties: Vec<EvalDuty> = teams
+        .iter()
+        .filter_map(|team| {
+            let at = team.begin_at.as_deref().and_then(util::parse_datetime)?;
+            // `duration` is hours in the intra payload; default one hour.
+            let minutes = (team.duration.unwrap_or(1.0) * 60.0) as i64;
+            let ends = at + chrono::Duration::minutes(minutes);
+            (ends > now).then(|| EvalDuty {
+                at,
+                scale_team_id: team.id,
+                project: team.project_name().map(str::to_owned),
+                logins: team
+                    .correcteds
+                    .iter()
+                    .filter_map(|corrected| corrected.login.clone())
+                    .collect(),
+            })
+        })
+        .collect();
+    for slot in slots {
+        let Some(at) = slot.start.as_deref().and_then(parse_slot_time) else {
+            continue;
+        };
+        let Some(end) = slot.end.as_deref().and_then(parse_slot_time) else {
+            continue;
+        };
+        if end <= now {
+            continue;
+        }
+        // Drop the bare slot once the intra team for the same evaluation
+        // exists — it carries the project and the corrected.
+        let absorbed = duties
+            .iter()
+            .any(|duty| (duty.at - at).num_minutes().abs() <= 1);
+        if !absorbed {
+            duties.push(EvalDuty {
+                at,
+                scale_team_id: None,
+                project: None,
+                logins: Vec::new(),
+            });
+        }
+    }
+    duties.sort_by_key(|duty| duty.at);
+    duties
+}
+
+/// One row: `Tue 26 Aug 15:00  codexion  in 2h 15m  → student` — the
+/// corrected only appears inside the reveal window.
+fn duty_line(
+    duty: &EvalDuty,
+    now: chrono::DateTime<chrono::Local>,
+    selected: bool,
+) -> Line<'static> {
+    let minutes = (duty.at - now).num_minutes();
+    let marker = if selected { "▸ " } else { "  " };
+    let mut spans = vec![Span::raw(marker)];
+    let style = |base: Style| {
+        if selected {
+            base.add_modifier(Modifier::BOLD)
+        } else {
+            base
+        }
+    };
+    spans.push(Span::styled(
+        format!("{}  ", duty.at.format("%a %d %b %H:%M")),
+        style(Style::default().fg(theme::WARN)),
+    ));
+    match &duty.project {
+        Some(project) => spans.push(Span::styled(project.clone(), style(theme::text()))),
+        None => spans.push(Span::styled("open hour", style(theme::muted()))),
+    }
+    let countdown_style = if minutes < 0 {
+        theme::good()
+    } else if minutes <= REVEAL_MINUTES {
+        theme::warn()
+    } else {
+        theme::muted()
+    };
+    spans.push(Span::styled(
+        format!("  {}", util::fmt_until(duty.at, now)),
+        style(countdown_style),
+    ));
+    if minutes <= REVEAL_MINUTES && !duty.logins.is_empty() {
+        spans.push(Span::styled(
+            format!("  → {}", duty.logins.join(", ")),
+            style(theme::bright()),
+        ));
+    }
+    Line::from(spans)
+}
+
+pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
+    let duties = || {
+        let now = chrono::Local::now();
+        let no_teams: Vec<ScaleTeam> = Vec::new();
+        let no_slots: Vec<Slot> = Vec::new();
+        let teams = app.dash.scale_teams.data().unwrap_or(&no_teams);
+        let slots = app.dash.eval_slots.data().unwrap_or(&no_slots);
+        eval_duties(teams, slots, now)
+    };
+    let count = duties().len();
+    match key.code {
+        KeyCode::Down | KeyCode::Char('j') => {
+            if count > 0 {
+                app.dash.duty_sel = (app.dash.duty_sel + 1).min(count - 1);
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.dash.duty_sel = app.dash.duty_sel.saturating_sub(1);
+        }
+        KeyCode::Enter => {
+            let duties = duties();
+            if let Some(duty) = duties.get(app.dash.duty_sel.min(duties.len().saturating_sub(1))) {
+                match duty.scale_team_id {
+                    Some(id) => {
+                        app.eval_view = Some(crate::state::EvalView::open(id));
+                        app.send(crate::bus::Command::LoadEvalForm { id });
+                    }
+                    // The slot exists but the intra team does not — it
+                    // appears once the evaluation is close (press r).
+                    None => app.set_status("not open yet — press r closer to the start"),
+                }
+            }
+        }
+        _ => {}
+    }
     Action::Continue
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::models::Corrected;
+    use chrono::TimeZone as _;
+
+    /// `now` pinned to a fixed local instant; every fixture time is
+    /// expressed relative to it so the tests hold in any timezone.
+    fn clock() -> chrono::DateTime<chrono::Local> {
+        chrono::Local
+            .with_ymd_and_hms(2026, 8, 26, 12, 0, 0)
+            .single()
+            .expect("valid instant")
+    }
+
+    /// Fixture timestamp `minutes` away from `now`.
+    fn at(now: chrono::DateTime<chrono::Local>, minutes: i64) -> String {
+        (now + chrono::Duration::minutes(minutes)).to_rfc3339()
+    }
+
+    fn team(begin: &str, project: Option<&str>, login: Option<&str>) -> ScaleTeam {
+        ScaleTeam {
+            begin_at: Some(begin.into()),
+            duration: Some(1.0),
+            correcteds: vec![Corrected {
+                login: login.map(str::to_owned),
+            }],
+            extra: serde_json::json!({ "team": { "project": { "name": project } } }),
+            ..Default::default()
+        }
+    }
+
+    fn slot(start: &str, end: &str) -> Slot {
+        Slot {
+            start: Some(start.into()),
+            end: Some(end.into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn finished_duties_are_dropped() {
+        let now = clock();
+        // Began 3h ago with a 1h duration — over.
+        let teams = vec![team(&at(now, -180), Some("codexion"), Some("student"))];
+        assert!(eval_duties(&teams, &[], now).is_empty());
+        // Began 20min ago, still running — kept.
+        let teams = vec![team(&at(now, 0), Some("codexion"), None)];
+        let kept = eval_duties(&teams, &[], now - chrono::Duration::minutes(20));
+        assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn duties_merge_sort_and_absorb() {
+        let now = clock();
+        let teams = vec![
+            team(&at(now, 1560), Some("push_swap"), Some("later")),
+            team(&at(now, 120), Some("codexion"), Some("student")),
+        ];
+        // Slot at the same time as the codexion team — absorbed; slot 5h
+        // out stays as a bare open hour.
+        let slots = vec![
+            slot(&at(now, 120), &at(now, 3)),
+            slot(&at(now, 300), &at(now, 360)),
+            slot(&at(now, -120), &at(now, -60)), // finished — dropped
+        ];
+        let duties = eval_duties(&teams, &slots, now);
+        assert_eq!(duties.len(), 3);
+        assert_eq!(duties[0].project.as_deref(), Some("codexion"));
+        assert_eq!(duties[1].project, None);
+        assert_eq!(duties[2].project.as_deref(), Some("push_swap"));
+    }
+
+    #[test]
+    fn logins_only_reveal_inside_the_window() {
+        let now = clock();
+        let far = eval_duties(
+            &[team(&at(now, 120), Some("codexion"), Some("student"))],
+            &[],
+            now,
+        );
+        let near = eval_duties(
+            &[team(&at(now, 10), Some("codexion"), Some("student"))],
+            &[],
+            now,
+        );
+        let text = |duty: &EvalDuty| {
+            duty_line(duty, now, false)
+                .spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        };
+        assert!(!text(&far[0]).contains("student"));
+        assert!(text(&near[0]).contains("→ student"));
+        // Already started — still revealed.
+        let mut running_team = team(&at(now, -60), Some("codexion"), Some("student"));
+        running_team.duration = Some(2.0); // began 1h ago, ends in 1h
+        let running = eval_duties(&[running_team], &[], now);
+        assert!(text(&running[0]).contains("→ student"));
+    }
 }

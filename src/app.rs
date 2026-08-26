@@ -72,6 +72,7 @@ pub struct App {
     pub user: UserView,
     pub clusters: ClustersState,
     pub subject_view: Option<crate::state::SubjectView>,
+    pub eval_view: Option<crate::state::EvalView>,
     pub notifications_open: bool,
     pub notifications_sel: usize,
     pub event_popup: Option<crate::state::EventPopup>,
@@ -108,6 +109,7 @@ impl App {
             user: UserView::default(),
             clusters: ClustersState::default(),
             subject_view: None,
+            eval_view: None,
             notifications_open: false,
             notifications_sel: 0,
             event_popup: None,
@@ -198,6 +200,7 @@ impl App {
         self.notifications_sel = 0;
         self.event_popup = None;
         self.subject_view = None;
+        self.eval_view = None;
         self.update_available = None;
     }
 

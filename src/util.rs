@@ -40,6 +40,28 @@ pub fn fmt_datetime(value: &str) -> String {
         .unwrap_or_else(|| value.to_owned())
 }
 
+/// Humanized time left until `target`: `in 3d 4h`, `in 2h 15m`, `in 12m`,
+/// `in 45s` — `now` once it has started.
+pub fn fmt_until(target: DateTime<Local>, now: DateTime<Local>) -> String {
+    let left = target - now;
+    if left <= Duration::zero() {
+        return "now".into();
+    }
+    let days = left.num_days();
+    let hours = (left - Duration::days(days)).num_hours();
+    let minutes = left.num_minutes();
+    let seconds = left.num_seconds();
+    if days > 0 {
+        format!("in {days}d {hours}h")
+    } else if hours > 0 {
+        format!("in {hours}h {}m", minutes % 60)
+    } else if minutes > 0 {
+        format!("in {minutes}m")
+    } else {
+        format!("in {seconds}s")
+    }
+}
+
 /// "HH:MM:SS" logtime -> seconds.
 pub fn hms_to_seconds(value: &str) -> i64 {
     let parts: Vec<i64> = value.split(':').filter_map(|p| p.parse().ok()).collect();
@@ -227,4 +249,28 @@ pub fn wrap_lines(text: &str, width: usize, max_lines: usize) -> Vec<ratatui::te
         .into_iter()
         .map(|line| Line::from(Span::styled(line, Style::default())))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn now() -> DateTime<Local> {
+        Local
+            .with_ymd_and_hms(2026, 8, 26, 12, 0, 0)
+            .single()
+            .unwrap()
+    }
+
+    #[test]
+    fn until_is_humanized() {
+        let base = now();
+        assert_eq!(fmt_until(base + Duration::hours(28), base), "in 1d 4h");
+        assert_eq!(fmt_until(base + Duration::minutes(135), base), "in 2h 15m");
+        assert_eq!(fmt_until(base + Duration::minutes(12), base), "in 12m");
+        assert_eq!(fmt_until(base + Duration::seconds(45), base), "in 45s");
+        // Started evaluations read as "now" instead of a negative delta.
+        assert_eq!(fmt_until(base - Duration::minutes(5), base), "now");
+        assert_eq!(fmt_until(base, base), "now");
+    }
 }

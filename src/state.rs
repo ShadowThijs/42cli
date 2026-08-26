@@ -70,6 +70,12 @@ pub struct Dashboard {
     pub events: Loadable<Vec<IntraEvent>>,
     pub notifications: Loadable<NotificationsPayload>,
     pub scale_teams: Loadable<Vec<ScaleTeam>>,
+    /// Open hours of mine that a student booked (slots.42belgium.be) —
+    /// evaluations to give that only materialize as intra scale_teams
+    /// shortly before they begin.
+    pub eval_slots: Loadable<Vec<Slot>>,
+    /// Selected row in the evaluations-to-give pane (Enter opens it).
+    pub duty_sel: usize,
     pub logtime: Loadable<LocationStats>,
     pub pace: Loadable<PaceProfile>,
     pub attendance: Loadable<AttendanceSummary>,
@@ -179,6 +185,264 @@ pub struct SubjectView {
     pub view_height: std::cell::Cell<u16>,
     /// Total rendered rows of the last render.
     pub total_height: std::cell::Cell<u16>,
+}
+
+// ---------------------------------------------------------- evaluation ----
+
+/// Full-screen evaluation view opened with Enter on an upcoming duty.
+#[derive(Debug)]
+pub struct EvalView {
+    pub scale_team_id: u64,
+    pub form: Loadable<EvalForm>,
+    /// One answer per question, index-aligned with `form.questions()`.
+    pub answers: Vec<AnswerInput>,
+    /// Index into `form.flags` — the selected rating flag.
+    pub flag: usize,
+    pub comment: CommentDraft,
+    /// The comment editor captures keys while true.
+    pub editing_comment: bool,
+    /// Selected row: `0..questions.len()` are questions, then flags,
+    /// then comment, then submit.
+    pub sel: usize,
+    pub submitting: bool,
+    /// Submit confirmation popup open.
+    pub confirming: bool,
+}
+
+impl EvalView {
+    pub fn open(scale_team_id: u64) -> Self {
+        Self {
+            scale_team_id,
+            form: Loadable::Loading,
+            answers: Vec::new(),
+            flag: 0,
+            comment: CommentDraft::default(),
+            editing_comment: false,
+            sel: 0,
+            submitting: false,
+            confirming: false,
+        }
+    }
+
+    /// Fill the interactive state from a freshly parsed form: defaults
+    /// come from whatever the page had preselected.
+    pub fn apply_form(&mut self, form: EvalForm) {
+        self.flag = form
+            .flags
+            .iter()
+            .position(|flag| Some(flag.id) == form.default_flag)
+            .unwrap_or(0);
+        self.answers = form
+            .questions()
+            .iter()
+            .map(|question| match &question.kind {
+                QuestionKind::Boolean { yes } => AnswerInput::Boolean(*yes),
+                QuestionKind::Choice { options } => {
+                    AnswerInput::Choice(options.iter().position(|o| o.selected).unwrap_or(0))
+                }
+                QuestionKind::Range { value, .. } => AnswerInput::Range(*value),
+            })
+            .collect();
+        self.form = Loadable::Ready(form);
+    }
+
+    /// The submission the current state would post.
+    pub fn submission(&self, form: &EvalForm) -> EvalSubmission {
+        let questions = form.questions();
+        EvalSubmission {
+            scale_team_id: self.scale_team_id,
+            action: form.action.clone(),
+            authenticity_token: form.authenticity_token.clone(),
+            answers: questions
+                .iter()
+                .zip(self.answers.iter())
+                .map(|(question, answer)| EvalAnswer {
+                    question_id: question.question_id,
+                    value: answer.submit_value(question),
+                    answer_id: question.answer_id.clone(),
+                })
+                .collect(),
+            flag_id: form.flags.get(self.flag).map(|flag| flag.id).unwrap_or(0),
+            comment: self.comment.text(),
+        }
+    }
+}
+
+/// The answer being edited for one question.
+#[derive(Debug, Clone)]
+pub enum AnswerInput {
+    Boolean(bool),
+    /// Index into the question's options.
+    Choice(usize),
+    Range(i64),
+}
+
+impl AnswerInput {
+    /// The exact string the original form input would send.
+    pub fn submit_value(&self, question: &EvalQuestion) -> String {
+        match (self, &question.kind) {
+            (AnswerInput::Boolean(yes), QuestionKind::Boolean { .. }) => {
+                if *yes {
+                    "1".into()
+                } else {
+                    "0".into()
+                }
+            }
+            (AnswerInput::Choice(index), QuestionKind::Choice { options }) => options
+                .get(*index)
+                .map(|option| option.value.clone())
+                .unwrap_or_default(),
+            (AnswerInput::Range(value), QuestionKind::Range { .. }) => value.to_string(),
+            _ => String::new(),
+        }
+    }
+}
+
+/// The closing comment caps at 2048 characters (the form's stated limit).
+pub const COMMENT_MAX_CHARS: usize = 2048;
+
+/// Minimal multi-line editor for the closing comment.
+#[derive(Debug, Clone)]
+pub struct CommentDraft {
+    lines: Vec<String>,
+    row: usize,
+    /// Cursor column, counted in characters.
+    col: usize,
+}
+
+impl Default for CommentDraft {
+    fn default() -> Self {
+        Self {
+            lines: vec![String::new()],
+            row: 0,
+            col: 0,
+        }
+    }
+}
+
+impl CommentDraft {
+    pub fn text(&self) -> String {
+        self.lines.join("\n")
+    }
+
+    pub fn char_count(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|line| line.chars().count() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    }
+
+    pub fn cursor(&self) -> (usize, usize) {
+        (self.row.min(self.lines.len() - 1), self.col)
+    }
+
+    pub fn line(&self, row: usize) -> &str {
+        self.lines.get(row).map(String::as_str).unwrap_or("")
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// Insert a character at the cursor, honoring the length cap.
+    pub fn insert(&mut self, ch: char) {
+        if self.char_count() >= COMMENT_MAX_CHARS {
+            return;
+        }
+        let row = self.row.min(self.lines.len() - 1);
+        let line = &mut self.lines[row];
+        let col = self.col.min(line.chars().count());
+        let byte = line
+            .char_indices()
+            .nth(col)
+            .map(|(byte, _)| byte)
+            .unwrap_or(line.len());
+        line.insert(byte, ch);
+        self.row = row;
+        self.col = col + 1;
+    }
+
+    /// Split the line at the cursor.
+    pub fn newline(&mut self) {
+        if self.char_count() >= COMMENT_MAX_CHARS {
+            return;
+        }
+        let row = self.row.min(self.lines.len() - 1);
+        let line = &mut self.lines[row];
+        let col = self.col.min(line.chars().count());
+        let byte = line
+            .char_indices()
+            .nth(col)
+            .map(|(byte, _)| byte)
+            .unwrap_or(line.len());
+        let tail = line.split_off(byte);
+        self.lines.insert(row + 1, tail);
+        self.row = row + 1;
+        self.col = 0;
+    }
+
+    /// Delete backwards; at column 0 the previous line joins this one.
+    pub fn backspace(&mut self) {
+        let row = self.row.min(self.lines.len() - 1);
+        if self.col > 0 {
+            let line = &mut self.lines[row];
+            let byte = line
+                .char_indices()
+                .nth(self.col - 1)
+                .map(|(byte, _)| byte)
+                .unwrap_or(0);
+            line.remove(byte);
+            self.col -= 1;
+        } else if row > 0 {
+            let tail = self.lines.remove(row);
+            let previous = &mut self.lines[row - 1];
+            self.col = previous.chars().count();
+            previous.push_str(&tail);
+            self.row = row - 1;
+        }
+    }
+
+    pub fn left(&mut self) {
+        if self.col > 0 {
+            self.col -= 1;
+        } else if self.row > 0 {
+            self.row -= 1;
+            self.col = self.lines[self.row].chars().count();
+        }
+    }
+
+    pub fn right(&mut self) {
+        let line = self.line(self.row);
+        if self.col < line.chars().count() {
+            self.col += 1;
+        } else if self.row + 1 < self.lines.len() {
+            self.row += 1;
+            self.col = 0;
+        }
+    }
+
+    pub fn up(&mut self) {
+        if self.row > 0 {
+            self.row -= 1;
+            self.col = self.col.min(self.line(self.row).chars().count());
+        }
+    }
+
+    pub fn down(&mut self) {
+        if self.row + 1 < self.lines.len() {
+            self.row += 1;
+            self.col = self.col.min(self.line(self.row).chars().count());
+        }
+    }
+
+    pub fn home(&mut self) {
+        self.col = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.col = self.line(self.row).chars().count();
+    }
 }
 
 // ------------------------------------------------------------- slots ----

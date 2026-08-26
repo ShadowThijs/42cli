@@ -28,6 +28,25 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
 
         Command::LoadDashboard { fresh } => preload_dashboard(&api, &tx, fresh).await,
 
+        Command::LoadEvalForm { id } => {
+            spawn_job(&api, &tx, id, |api, id| async move {
+                Msg::EvalFormLoaded {
+                    id,
+                    result: api.evaluation_form(id).await,
+                }
+            });
+        }
+
+        Command::SubmitEval(submission) => {
+            spawn_job(&api, &tx, submission, |api, submission| async move {
+                let id = submission.scale_team_id;
+                Msg::EvalSubmitted {
+                    id,
+                    result: api.submit_evaluation(&submission).await,
+                }
+            });
+        }
+
         Command::LoadProjects { fresh } => {
             spawn_job(&api, &tx, fresh, |api, fresh| async move {
                 Msg::ProjectData(dashboard_graph(&api, fresh).await)
@@ -323,6 +342,43 @@ async fn preload_dashboard(api: &Arc<Api>, tx: &Sender<Msg>, fresh: bool) {
         Msg::MyNotifications(api.my_notifications().await)
     });
 
+    // Booked open hours: students reserve evaluation slots on my open
+    // hours (slots.42belgium.be). Those duties never show up in
+    // `/users/me/scale_teams` until they materialize shortly before they
+    // begin, so derive the upcoming ones from the slot feeds: every
+    // reserved booking that overlaps one of my open hours.
+    spawn_job(api, tx, (), |api, ()| async move {
+        let parse = crate::api::slots::parse_slot_time;
+        let result = async {
+            let anchor = chrono::Local::now().date_naive();
+            let open = api.open_slots(anchor, 14).await?;
+            let reserved = api.reserved_slots(anchor, 14).await?;
+            let booked = reserved
+                .into_iter()
+                .filter(|slot| {
+                    let (Some(start), Some(end)) = (
+                        slot.start.as_deref().and_then(parse),
+                        slot.end.as_deref().and_then(parse),
+                    ) else {
+                        return false;
+                    };
+                    open.iter().any(|hour| {
+                        matches!(
+                            (
+                                hour.start.as_deref().and_then(parse),
+                                hour.end.as_deref().and_then(parse),
+                            ),
+                            (Some(hour_start), Some(hour_end)) if hour_start < end && start < hour_end
+                        )
+                    })
+                })
+                .collect();
+            Ok::<Vec<Slot>, ApiError>(booked)
+        }
+        .await;
+        Msg::MyEvalSlots(result)
+    });
+
     // Fetches that need the numeric id wait for `me` first.
     let me = api.me_summary(fresh).await;
     let Ok(me) = me else { return };
@@ -396,7 +452,9 @@ async fn load_user(api: Arc<Api>, tx: Sender<Msg>, login: String) {
     spawn_job(&api, &tx, login.clone(), |api, login| async move {
         let result = async {
             let profile = api.user_profile(&login, false).await?;
-            let id = profile.id.ok_or_else(|| ApiError::Other("user has no id".into()))?;
+            let id = profile
+                .id
+                .ok_or_else(|| ApiError::Other("user has no id".into()))?;
             let cursus_list = api.user_cursus(id, false).await.unwrap_or_default();
             let ids: Vec<u32> = if cursus_list.is_empty() {
                 vec![21, 65]
@@ -412,10 +470,7 @@ async fn load_user(api: Arc<Api>, tx: Sender<Msg>, login: String) {
             // Deduplicate by slug when same project appears in multiple cursus
             let mut seen = std::collections::HashSet::new();
             merged.retain(|p| {
-                let key = p
-                    .display_slug()
-                    .unwrap_or("")
-                    .to_owned()
+                let key = p.display_slug().unwrap_or("").to_owned()
                     + &p.final_mark.unwrap_or(0).to_string();
                 seen.insert(key)
             });
@@ -427,7 +482,9 @@ async fn load_user(api: Arc<Api>, tx: Sender<Msg>, login: String) {
     spawn_job(&api, &tx, login.clone(), |api, login| async move {
         let result = async {
             let profile = api.user_profile(&login, false).await?;
-            let id = profile.id.ok_or_else(|| ApiError::Other("user has no id".into()))?;
+            let id = profile
+                .id
+                .ok_or_else(|| ApiError::Other("user has no id".into()))?;
             let cursus_list = api.user_cursus(id, false).await.unwrap_or_default();
             let ids: Vec<u32> = if cursus_list.is_empty() {
                 vec![21, 65]

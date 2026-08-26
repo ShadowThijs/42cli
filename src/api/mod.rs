@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod aux;
 pub mod error;
+pub mod eval;
 pub mod intrapy;
 pub mod models;
 pub mod slots;

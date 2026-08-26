@@ -34,6 +34,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         ui::subject::handle_key(app, key);
         return Action::Continue;
     }
+    // So is the evaluation form — answering questions must not leak
+    // keystrokes into the tabs behind it.
+    if app.eval_view.is_some() {
+        ui::eval::handle_key(app, key);
+        return Action::Continue;
+    }
 
     // The clone prompt is a proper overlay too — it must swallow F-keys and
     // global shortcuts while destination / folder name are being typed.

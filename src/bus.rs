@@ -27,6 +27,12 @@ pub enum Command {
     LoadDashboard {
         fresh: bool,
     },
+    /// Open the evaluation form for an upcoming duty.
+    LoadEvalForm {
+        id: u64,
+    },
+    /// Submit a finished evaluation (the Rails form POST).
+    SubmitEval(EvalSubmission),
     // Projects tab.
     LoadProjects {
         fresh: bool,
@@ -128,6 +134,17 @@ pub enum Msg {
     MyEvents(Result<Vec<IntraEvent>, ApiError>),
     MyNotifications(Result<NotificationsPayload, ApiError>),
     MyScaleTeams(Result<Vec<ScaleTeam>, ApiError>),
+    /// My open hours booked by a student — evaluations to give.
+    MyEvalSlots(Result<Vec<Slot>, ApiError>),
+    EvalFormLoaded {
+        id: u64,
+        result: Result<EvalForm, ApiError>,
+    },
+    /// `Ok(target)` carries the redirect after a successful submission.
+    EvalSubmitted {
+        id: u64,
+        result: Result<String, ApiError>,
+    },
     MyLogtime(Result<LocationStats, ApiError>),
     MyPace(Result<PaceProfile, ApiError>),
     MyAttendance(Result<AttendanceSummary, ApiError>),

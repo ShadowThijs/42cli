@@ -225,6 +225,139 @@ pub struct Corrected {
     pub login: Option<String>,
 }
 
+impl ScaleTeam {
+    /// Project under evaluation — the `/users/me/scale_teams` payload
+    /// nests it as `team.project.name` (kept in `extra`).
+    pub fn project_name(&self) -> Option<&str> {
+        self.extra
+            .get("team")?
+            .get("project")?
+            .get("name")?
+            .as_str()
+    }
+}
+
+// --------------------------------------------------------- evaluations ----
+
+/// A scraped evaluation form (`GET /scale_teams/{id}/edit`): everything
+/// needed to render and later submit the correction grid.
+#[derive(Debug, Clone, Default)]
+pub struct EvalForm {
+    /// POST target (the Rails form `action`).
+    pub action: String,
+    pub authenticity_token: String,
+    pub project: String,
+    /// Logins of the evaluated student(s).
+    pub correcteds: Vec<String>,
+    /// Vogsphere repository of the team under evaluation.
+    pub repo: Option<String>,
+    pub sections: Vec<EvalSection>,
+    /// Every flag the scale offers, page order (positive first).
+    pub flags: Vec<EvalFlag>,
+    /// Flag preselected on the page — almost always `Ok`.
+    pub default_flag: Option<u32>,
+}
+
+impl EvalForm {
+    /// Flat question list in page order — the selection indexing used by
+    /// the evaluation view.
+    pub fn questions(&self) -> Vec<&EvalQuestion> {
+        self.sections
+            .iter()
+            .flat_map(|section| section.questions.iter())
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EvalSection {
+    pub title: String,
+    pub questions: Vec<EvalQuestion>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EvalQuestion {
+    pub question_id: u64,
+    pub name: String,
+    /// Requirement text under the question name (HTML stripped).
+    pub guidelines: String,
+    /// Server id of an existing answer when the form was already
+    /// partially submitted — sent back unchanged on submission.
+    pub answer_id: Option<String>,
+    pub kind: QuestionKind,
+}
+
+/// How a question is answered and rendered. The value submitted is
+/// always the exact string the original form input would send.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuestionKind {
+    /// Yes/No radio pair — submits `"1"` / `"0"`.
+    Boolean {
+        /// The page's preselected answer (default `No`).
+        yes: bool,
+    },
+    /// Radios with more options than plain yes/no.
+    Choice { options: Vec<EvalChoice> },
+    /// Slider — a number in `min..=max` moved in `step`s. Sliders are
+    /// grouped per skill (`data-slider-id` + `data-kind`); the combined
+    /// total of a group is capped by its kind (standard ≤ 100, bonus ≤ 25)
+    /// — moving one lowers the ceiling of its siblings.
+    Range {
+        min: i64,
+        max: i64,
+        step: i64,
+        value: i64,
+        skill: Option<String>,
+        kind: Option<String>,
+    },
+}
+
+impl Default for QuestionKind {
+    fn default() -> Self {
+        QuestionKind::Boolean { yes: false }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EvalChoice {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
+}
+
+/// One flag of the ratings row above the comment box.
+#[derive(Debug, Clone, Default)]
+pub struct EvalFlag {
+    pub id: u32,
+    /// Page label, e.g. `Outstanding project`, `Cheat`, `Crash`.
+    pub name: String,
+    /// Ok / Outstanding project grade normally; negative flags end the
+    /// grading with a 0 (cheating: -42).
+    pub positive: bool,
+}
+
+/// One answer ready for submission.
+#[derive(Debug, Clone, Default)]
+pub struct EvalAnswer {
+    pub question_id: u64,
+    /// Exactly what the original form input would send (`"1"`, `"0"`,
+    /// a slider number, a choice value).
+    pub value: String,
+    /// Existing answer id, when the form carried one.
+    pub answer_id: Option<String>,
+}
+
+/// Everything a finished evaluation submits.
+#[derive(Debug, Clone, Default)]
+pub struct EvalSubmission {
+    pub scale_team_id: u64,
+    pub action: String,
+    pub authenticity_token: String,
+    pub answers: Vec<EvalAnswer>,
+    pub flag_id: u32,
+    pub comment: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Achievement {
     pub id: Option<u64>,
