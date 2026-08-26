@@ -173,30 +173,13 @@ fn draw_cursus(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_pace(frame: &mut Frame, app: &App, area: Rect) {
-    let is_piscine = app
-        .user
-        .cursus
-        .data()
-        .map(|list| {
-            list.iter().any(|c| {
-                c.slug
-                    .as_deref()
-                    .map(|s| s.contains("piscine"))
-                    .unwrap_or(false)
-                    || c.name
-                        .as_deref()
-                        .map(|n| n.to_lowercase().contains("piscine"))
-                        .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false);
     // Piscine students (e.g. mtorfs, cursus 65) have no pace-system
     // profile — the API returns 404 `No row was found…`. Show a friendly
     // placeholder instead of the raw error line. This was observed in
     // caido for mtorfs: GET /api/v1/users/272535/profile → 404, while
     // /api/v1/users/mtorfs/projects/marked?cursus_id=65 and
     // /ongoing?cursus_id=65 succeed with Piscine projects.
-    if is_piscine && matches!(app.user.pace, Loadable::Failed(_)) {
+    if app.user.is_piscine() && matches!(app.user.pace, Loadable::Failed(_)) {
         let block = theme::pane(false).title(Span::styled(" pace ", theme::title()));
         let inner = block.inner(area);
         frame.render_widget(block, area);

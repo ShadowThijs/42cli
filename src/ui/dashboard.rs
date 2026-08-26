@@ -133,18 +133,65 @@ fn draw_identity(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // -- pace / blackhole ------------------------------------------------
-    // With the pace system active there is no blackhole — the milestone
-    // deadline replaces it.
-    let blackhole = if app.dash.pace.data().is_some_and(|pace| pace.is_activated) {
-        None
+    // Piscine students (e.g. cursus 65 `c-piscine-antwerp`) have no
+    // pace-system profile — the API 404s. Show a friendly placeholder
+    // instead of the raw error, mirroring the user view.
+    if app.dash.is_piscine() && matches!(app.dash.pace, Loadable::Failed(_)) {
+        let block = widgets::titled_block(" pace ", false);
+        let inner = block.inner(rows[2]);
+        frame.render_widget(block, rows[2]);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "No pace — Piscine",
+                theme::muted(),
+            ))),
+            inner,
+        );
     } else {
-        app.dash
-            .main_cursus()
-            .and_then(|cursus| cursus.blackholed_at.clone())
-    };
+        // With the pace system active there is no blackhole — the
+        // milestone deadline replaces it.
+        let blackhole = if app.dash.pace.data().is_some_and(|pace| pace.is_activated) {
+            None
+        } else {
+            app.dash
+                .main_cursus()
+                .and_then(|cursus| cursus.blackholed_at.clone())
+        };
+        draw_pace_pane(frame, rows[2], app, blackhole);
+    }
+
+    // -- achievements -----------------------------------------------------
     widgets::loadable(
         frame,
-        rows[2],
+        rows[3],
+        " achievements ",
+        &app.dash.achievements,
+        app.tick,
+        |frame, area, achievements| {
+            let lines: Vec<Line> = achievements
+                .iter()
+                .take(area.height as usize)
+                .map(|achievement| {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{:<10}", achievement.tier.clone().unwrap_or_default()),
+                            Style::default().fg(theme::MAGENTA),
+                        ),
+                        Span::styled(achievement.name.clone().unwrap_or_default(), theme::text()),
+                    ])
+                })
+                .collect();
+            frame.render_widget(Paragraph::new(lines), area);
+        },
+    );
+}
+
+/// The pace pane for cursus students: pace, milestone deadline and the
+/// blackhole fallback.
+fn draw_pace_pane(frame: &mut Frame, area: Rect, app: &App, blackhole: Option<String>) {
+    widgets::loadable(
+        frame,
+        area,
         " pace ",
         &app.dash.pace,
         app.tick,
@@ -200,31 +247,6 @@ fn draw_identity(frame: &mut Frame, app: &App, area: Rect) {
                     },
                 ));
             }
-            frame.render_widget(Paragraph::new(lines), area);
-        },
-    );
-
-    // -- achievements -----------------------------------------------------
-    widgets::loadable(
-        frame,
-        rows[3],
-        " achievements ",
-        &app.dash.achievements,
-        app.tick,
-        |frame, area, achievements| {
-            let lines: Vec<Line> = achievements
-                .iter()
-                .take(area.height as usize)
-                .map(|achievement| {
-                    Line::from(vec![
-                        Span::styled(
-                            format!("{:<10}", achievement.tier.clone().unwrap_or_default()),
-                            Style::default().fg(theme::MAGENTA),
-                        ),
-                        Span::styled(achievement.name.clone().unwrap_or_default(), theme::text()),
-                    ])
-                })
-                .collect();
             frame.render_widget(Paragraph::new(lines), area);
         },
     );

@@ -70,6 +70,20 @@ pub struct Cursus {
     pub can_give_points: bool,
 }
 
+impl Cursus {
+    /// Piscine cursus (e.g. `c-piscine`, cursus id 65): its students have
+    /// no pace-system profile — requests 404.
+    pub fn is_piscine(&self) -> bool {
+        self.slug
+            .as_deref()
+            .is_some_and(|slug| slug.contains("piscine"))
+            || self
+                .name
+                .as_deref()
+                .is_some_and(|name| name.to_lowercase().contains("piscine"))
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Campus {
     pub id: Option<u32>,

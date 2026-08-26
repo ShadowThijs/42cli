@@ -85,6 +85,14 @@ impl Dashboard {
                 .or_else(|| list.first())
         })
     }
+
+    /// True once the cursus list shows any Piscine entry — used to mask
+    /// the pace 404 with a friendly placeholder.
+    pub fn is_piscine(&self) -> bool {
+        self.cursus
+            .data()
+            .is_some_and(|list| list.iter().any(Cursus::is_piscine))
+    }
 }
 
 // ---------------------------------------------------------- projects ----
@@ -283,6 +291,16 @@ pub struct UserPopup {
     pub scroll: u16,
     pub view_height: std::cell::Cell<u16>,
     pub total_height: std::cell::Cell<u16>,
+}
+
+impl UserView {
+    /// True once the cursus list shows any Piscine entry — used to mask
+    /// the pace 404 with a friendly placeholder.
+    pub fn is_piscine(&self) -> bool {
+        self.cursus
+            .data()
+            .is_some_and(|list| list.iter().any(Cursus::is_piscine))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
