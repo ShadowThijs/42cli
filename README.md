@@ -23,7 +23,7 @@ Sessions (tokens + cookies) are cached in `~/.config/42cli/session.json`
 - **Projects** — active / available / done segments over the holy graph,
   full detail (rules, description, difficulty, duration), team members,
   git repository, locked date, and **document downloads** (subjects,
-  archives) to `~/Downloads/42cli-documents/`.
+  archives) to `~/Downloads/42cli-documents/<project name>/`.
 - **Slots** — open/close availability hours at both campuses with an
   inter-campus option, project slot booking through
   `slots.42belgium.be`, your reservations (★) with cancel, and a

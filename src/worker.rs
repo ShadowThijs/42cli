@@ -69,8 +69,8 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::Schedule { slug, result });
         }
 
-        Command::DownloadAttachment { name, url } => {
-            let result = api.download_attachment(&url, &name).await;
+        Command::DownloadAttachment { project, name, url } => {
+            let result = api.download_attachment(&url, &name, &project).await;
             let _ = tx.send(Msg::DownloadDone { name, result });
         }
 
@@ -84,13 +84,41 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             repo,
             dest,
             name,
+            passphrase,
         } => {
-            let result = git_clone(&repo, &dest, name.as_deref()).await;
-            let path = match &result {
-                Ok(path) => path.clone(),
-                Err(_) => dest,
-            };
-            let _ = tx.send(Msg::CloneDone { slug, path, result });
+            match git_clone(&repo, &dest, name.as_deref(), passphrase.as_deref()).await {
+                Ok(path) => {
+                    let _ = tx.send(Msg::CloneDone {
+                        slug,
+                        path: path.clone(),
+                        result: Ok(path),
+                    });
+                }
+                // A locked ssh key on the first attempt: hand the clone
+                // back to the UI, which asks for the passphrase in a popup.
+                Err(CloneFailure::Auth(_)) if passphrase.is_none() => {
+                    let _ = tx.send(Msg::CloneNeedsPassphrase {
+                        slug,
+                        repo,
+                        dest,
+                        name,
+                    });
+                }
+                Err(CloneFailure::Auth(tail)) => {
+                    let _ = tx.send(Msg::CloneDone {
+                        slug,
+                        path: dest,
+                        result: Err(format!("{tail} — wrong passphrase?")),
+                    });
+                }
+                Err(CloneFailure::Other(tail)) => {
+                    let _ = tx.send(Msg::CloneDone {
+                        slug,
+                        path: dest,
+                        result: Err(tail),
+                    });
+                }
+            }
         }
 
         Command::Search { query } => {
@@ -618,22 +646,74 @@ async fn marked_of(api: &Arc<Api>) -> Result<Vec<MarkedProject>, ApiError> {
     api.marked_projects(&login, cursus).await
 }
 
+/// Why a clone failed: an ssh/credential rejection (the passphrase-popup
+/// case) or anything else.
+enum CloneFailure {
+    Auth(String),
+    Other(String),
+}
+
 /// `git clone` into `dest`, optionally under an explicit folder name —
 /// without one git picks the repo's own name, exactly like on the command
 /// line. Returns the resulting folder. Vogsphere needs the campus network +
 /// SSH key, so failures surface as the last lines of git's output instead
 /// of a raw io error.
-async fn git_clone(repo: &str, dest: &str, name: Option<&str>) -> Result<String, String> {
-    std::fs::create_dir_all(dest).map_err(|error| format!("cannot create {dest}: {error}"))?;
+///
+/// The TUI owns the terminal: ssh prompts (passphrase, host key) write
+/// straight to /dev/tty, drawing over the UI while the event loop eats the
+/// keystrokes ssh waits on. So prompting is always disabled and the clone
+/// runs non-interactively; a passphrase-protected key bounces the first
+/// attempt, the UI asks for the passphrase in a popup and this runs again
+/// with `passphrase` set — ssh then reads it from a throwaway askpass
+/// shim, never from the terminal.
+async fn git_clone(
+    repo: &str,
+    dest: &str,
+    name: Option<&str>,
+    passphrase: Option<&str>,
+) -> Result<String, CloneFailure> {
+    std::fs::create_dir_all(dest)
+        .map_err(|error| CloneFailure::Other(format!("cannot create {dest}: {error}")))?;
     let mut command = tokio::process::Command::new("git");
     command.arg("clone").arg(repo).current_dir(dest);
     if let Some(name) = name {
         command.arg(name);
     }
-    let output = command
-        .output()
-        .await
-        .map_err(|error| format!("cannot run git: {error}"))?;
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "true")
+        .env(
+            "GIT_SSH_COMMAND",
+            if passphrase.is_some() {
+                // The askpass shim answers the passphrase; unknown vogsphere
+                // host keys are trusted on first use, changed ones abort.
+                "ssh -oStrictHostKeyChecking=accept-new"
+            } else {
+                // BatchMode forbids every prompt outright — an `ssh-add`ed
+                // key still works, the agent answers without a terminal.
+                "ssh -oBatchMode=yes -oStrictHostKeyChecking=accept-new"
+            },
+        );
+    let askpass = match passphrase.map(askpass_shim) {
+        Some(Ok(guard)) => Some(guard),
+        Some(Err(error)) => return Err(CloneFailure::Other(error)),
+        None => None,
+    };
+    if let Some(guard) = &askpass {
+        command
+            .env("SSH_ASKPASS", &guard.shim)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("DISPLAY", ":0");
+    }
+    let output = match command.output().await {
+        Ok(output) => output,
+        Err(error) => {
+            return Err(CloneFailure::Other(format!("cannot run git: {error}")));
+        }
+    };
+    // The guard would clean up on drop anyway, but the secret should not
+    // outlive the clone a second longer than it must.
+    drop(askpass);
     if output.status.success() {
         let folder = name
             .map(str::to_owned)
@@ -653,11 +733,66 @@ async fn git_clone(repo: &str, dest: &str, name: Option<&str>) -> Result<String,
         .cloned()
         .collect::<Vec<_>>()
         .join(" · ");
-    Err(if tail.is_empty() {
+    let message = if tail.is_empty() {
         format!("git exited with {}", output.status)
     } else {
         tail
-    })
+    };
+    if auth_failure(&stderr) {
+        Err(CloneFailure::Auth(message))
+    } else {
+        Err(CloneFailure::Other(message))
+    }
+}
+
+/// True when git's stderr reads like an ssh/credential rejection — the
+/// passphrase-popup case — rather than a network or repository error.
+fn auth_failure(stderr: &str) -> bool {
+    stderr.contains("Permission denied")
+        || stderr.contains("publickey")
+        || stderr.contains("passphrase")
+        || stderr.contains("Authentication failed")
+}
+
+/// The askpass pair: `secret` holds the passphrase (0600) and `shim` is a
+/// 0700 script printing it — `SSH_ASKPASS` demands an executable, so the
+/// passphrase rides through a file pair in the runtime dir instead of any
+/// terminal. Both are removed the moment the guard drops.
+struct AskpassGuard {
+    secret: std::path::PathBuf,
+    shim: std::path::PathBuf,
+}
+
+impl Drop for AskpassGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.secret);
+        let _ = std::fs::remove_file(&self.shim);
+    }
+}
+
+fn askpass_shim(passphrase: &str) -> Result<AskpassGuard, String> {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let stem = format!("42cli-askpass-{}", std::process::id());
+    let secret = dir.join(format!("{stem}.secret"));
+    let shim = dir.join(format!("{stem}.sh"));
+    std::fs::write(&secret, passphrase)
+        .map_err(|error| format!("cannot write askpass secret: {error}"))?;
+    // Single-quote the path; the only escape that can occur is a quote.
+    let quoted = secret.display().to_string().replace('\'', "'\\''");
+    let written = std::fs::write(&shim, format!("#!/bin/sh\ncat '{quoted}'\n")).map_err(|error| {
+        let _ = std::fs::remove_file(&secret);
+        format!("cannot write askpass shim: {error}")
+    });
+    written?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(AskpassGuard { secret, shim })
 }
 
 /// git's default folder: the basename of an URL or SCP-style path, with a

@@ -320,9 +320,15 @@ impl Api {
         Ok(schedule)
     }
 
-    /// Download a CDN document (subjects, archives) into the downloads dir
-    /// and return the destination path.
-    pub async fn download_attachment(&self, url: &str, name: &str) -> ApiResult<String> {
+    /// Download a CDN document (subjects, archives) into the downloads dir,
+    /// under a per-project subfolder (their names repeat across projects,
+    /// so a flat directory would silently overwrite) and return the path.
+    pub async fn download_attachment(
+        &self,
+        url: &str,
+        name: &str,
+        project: &str,
+    ) -> ApiResult<String> {
         let resp = self
             .http
             .get(url)
@@ -333,7 +339,9 @@ impl Api {
             return Err(ApiError::from_response("cdn", resp).await);
         }
         let bytes = resp.bytes().await?;
-        let dir = crate::config::downloads_dir();
+        let dir = crate::config::downloads_dir().join(project.replace(['/', '\\'], "_"));
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| ApiError::Other(format!("create {}: {error}", dir.display())))?;
         let safe_name = name.replace(['/', '\\'], "_");
         let path = dir.join(safe_name);
         std::fs::write(&path, &bytes)

@@ -146,6 +146,22 @@ impl App {
                     Err(error) => self.set_status(format!("clone failed: {error}")),
                 }
             }
+            Msg::CloneNeedsPassphrase {
+                slug,
+                repo,
+                dest,
+                name,
+            } => {
+                self.projects.cloning.retain(|s| s != &slug);
+                self.projects.passphrase_prompt = Some(crate::state::PassphrasePrompt {
+                    slug,
+                    repo,
+                    dest,
+                    name,
+                    input: tui_input::Input::new(String::new()),
+                });
+                self.set_status("passphrase-protected ssh key — enter the passphrase");
+            }
 
             // -------------------------------------------- search / user ----
             Msg::SearchResults(result) => {

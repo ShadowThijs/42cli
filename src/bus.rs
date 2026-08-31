@@ -47,6 +47,9 @@ pub enum Command {
         fresh: bool,
     },
     DownloadAttachment {
+        /// Project display name: documents land in a downloads subfolder
+        /// of that name so `subject.pdf` never collides across projects.
+        project: String,
         name: String,
         url: String,
     },
@@ -62,6 +65,9 @@ pub enum Command {
         dest: String,
         /// Target folder name; `None` = git's default (repo name).
         name: Option<String>,
+        /// ssh passphrase for the retry of a bounced clone; `None` on the
+        /// first, non-interactive attempt.
+        passphrase: Option<String>,
     },
     // User search / profile view.
     Search {
@@ -173,6 +179,14 @@ pub enum Msg {
         slug: String,
         path: String,
         result: Result<String, String>,
+    },
+    /// The clone bounced off a passphrase-protected ssh key: the UI opens
+    /// the passphrase popup, which retries via `CloneRepo`.
+    CloneNeedsPassphrase {
+        slug: String,
+        repo: String,
+        dest: String,
+        name: Option<String>,
     },
 
     SearchResults(Result<Vec<SearchResult>, ApiError>),

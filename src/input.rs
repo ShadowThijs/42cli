@@ -47,6 +47,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         ui::projects::handle_clone_prompt_key(app, key);
         return Action::Continue;
     }
+    // So is the ssh-passphrase retry popup it can lead to.
+    if app.projects.passphrase_prompt.is_some() {
+        return ui::projects::handle_passphrase_prompt_key(app, key);
+    }
     // So is the post-clone "open in editor?" popup.
     if app.projects.editor_prompt.is_some() {
         ui::projects::handle_editor_prompt_key(app, key);

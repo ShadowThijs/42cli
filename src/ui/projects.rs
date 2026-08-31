@@ -35,6 +35,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     draw_list(frame, app, columns[0]);
     draw_detail(frame, app, columns[1]);
     draw_clone_prompt(frame, app, area);
+    draw_passphrase_prompt(frame, app, area);
     draw_editor_prompt(frame, app, area);
 }
 
@@ -446,6 +447,42 @@ fn draw_clone_prompt(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+/// Popup asking for the ssh passphrase after a clone bounced off a locked
+/// key; Enter retries the same clone with it.
+fn draw_passphrase_prompt(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(prompt) = &app.projects.passphrase_prompt else {
+        return;
+    };
+    let popup = centered(area, 50, 9);
+    let block = widgets::titled_block(" ssh passphrase ", true);
+    let inner = block.inner(popup);
+    frame.render_widget(ratatui::widgets::Clear, popup);
+    frame.render_widget(block, popup);
+
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+    ])
+    .spacing(1)
+    .split(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            truncate(&prompt.repo, inner.width as usize - 2),
+            theme::muted(),
+        ))),
+        rows[0],
+    );
+    widgets::input_field(frame, rows[1], " passphrase", &prompt.input, true, true);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "Enter=retry clone · Esc=cancel",
+            theme::muted(),
+        ))),
+        rows[2],
+    );
+}
+
 /// Post-clone popup: jump straight into the fresh folder with an editor.
 fn draw_editor_prompt(frame: &mut Frame, app: &App, area: Rect) {
     let Some(path) = &app.projects.editor_prompt else {
@@ -690,7 +727,51 @@ fn submit_clone(app: &mut App) {
         repo,
         dest,
         name: if name.is_empty() { None } else { Some(name) },
+        passphrase: None,
     });
+}
+
+/// Keys inside the ssh-passphrase popup: Enter retries the clone with it,
+/// Esc gives up on the clone entirely.
+pub fn handle_passphrase_prompt_key(app: &mut App, key: KeyEvent) -> Action {
+    let Some(prompt) = app.projects.passphrase_prompt.as_mut() else {
+        return Action::Continue;
+    };
+    match key.code {
+        KeyCode::Esc => {
+            app.projects.passphrase_prompt = None;
+            app.set_status("clone cancelled");
+        }
+        KeyCode::Enter => {
+            let passphrase = prompt.input.value().to_owned();
+            if passphrase.is_empty() {
+                app.set_status("passphrase required — or Esc to cancel");
+                return Action::Continue;
+            }
+            let (slug, repo, dest, name) = (
+                prompt.slug.clone(),
+                prompt.repo.clone(),
+                prompt.dest.clone(),
+                prompt.name.clone(),
+            );
+            app.projects.passphrase_prompt = None;
+            app.projects.cloning.push(slug.clone());
+            app.set_status("cloning…");
+            app.send(crate::bus::Command::CloneRepo {
+                slug,
+                repo,
+                dest,
+                name,
+                passphrase: Some(passphrase),
+            });
+        }
+        _ => {
+            prompt
+                .input
+                .handle_event(&crossterm::event::Event::Key(key));
+        }
+    }
+    Action::Continue
 }
 
 /// Keys inside the post-clone "open in editor?" popup.
@@ -756,8 +837,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
                     && let Some(attachment) = mine.attachments.get(app.projects.attachment_sel)
                 {
                     let name = attachment.name.clone();
+                    let project = entry.name.clone().unwrap_or_else(|| slug.clone());
                     app.projects.downloading.insert(name.clone(), true);
                     app.send(crate::bus::Command::DownloadAttachment {
+                        project,
                         name,
                         url: attachment.url.clone(),
                     });

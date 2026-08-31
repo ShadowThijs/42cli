@@ -150,6 +150,8 @@ pub struct ProjectsState {
     pub cloning: Vec<String>,
     /// Destination + folder-name prompt opened with `g`.
     pub clone_prompt: Option<ClonePrompt>,
+    /// Popup after a clone bounced off a passphrase-protected ssh key.
+    pub passphrase_prompt: Option<PassphrasePrompt>,
     /// Folder of a just-finished clone, offered to an editor.
     pub editor_prompt: Option<String>,
     pub focus_details: bool,
@@ -169,6 +171,17 @@ pub struct ClonePrompt {
     pub focus: u8,
     /// Path candidates for the destination (Tab completion).
     pub completions: Option<String>,
+}
+
+/// The ssh-passphrase popup: the clone parameters to retry plus the masked
+/// input; submitting re-fires `CloneRepo` with the passphrase attached.
+#[derive(Debug)]
+pub struct PassphrasePrompt {
+    pub slug: String,
+    pub repo: String,
+    pub dest: String,
+    pub name: Option<String>,
+    pub input: Input,
 }
 
 // ------------------------------------------------------- subject view ----

@@ -741,7 +741,10 @@ fn draw_popup(frame: &mut Frame, app: &App, area: Rect) {
                 for att in &mine.attachments {
                     lines.push(Line::from(vec![
                         Span::styled("  · ", theme::muted()),
-                        Span::styled(util::truncate_str(&att.name, w.saturating_sub(4)), theme::text()),
+                        Span::styled(
+                            util::truncate_str(&att.name, w.saturating_sub(4)),
+                            theme::text(),
+                        ),
                     ]));
                     // Show CDN URL as secondary muted line so it mirrors browser's
                     // link target without being interactive.
