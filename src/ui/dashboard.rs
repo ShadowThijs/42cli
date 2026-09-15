@@ -425,19 +425,31 @@ fn eval_duties(
     let mut duties: Vec<EvalDuty> = teams
         .iter()
         .filter_map(|team| {
+            // intrapy marks the role: a `corrected` entry is an evaluation
+            // I receive, not one to give.
+            if team
+                .extra
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind != "evaluator")
+            {
+                return None;
+            }
             let at = team.begin_at.as_deref().and_then(util::parse_datetime)?;
             // `duration` is hours in the intra payload; default one hour.
             let minutes = (team.duration.unwrap_or(1.0) * 60.0) as i64;
             let ends = at + chrono::Duration::minutes(minutes);
-            (ends > now).then(|| EvalDuty {
+            // Upcoming or still running — or the window already passed but
+            // the grid was never submitted (`can_report` stays true until
+            // it does): those still need giving.
+            if ends <= now && !team.needs_report() {
+                return None;
+            }
+            Some(EvalDuty {
                 at,
                 scale_team_id: team.id,
                 project: team.project_name().map(str::to_owned),
-                logins: team
-                    .correcteds
-                    .iter()
-                    .filter_map(|corrected| corrected.login.clone())
-                    .collect(),
+                logins: team.corrected_logins(),
             })
         })
         .collect();
@@ -652,5 +664,56 @@ mod tests {
         running_team.duration = Some(2.0); // began 1h ago, ends in 1h
         let running = eval_duties(&[running_team], &[], now);
         assert!(text(&running[0]).contains("→ student"));
+    }
+
+    /// Intrapy's flattened duty shape: `project_name` + `user` + `kind`,
+    /// no `correcteds` and no nested `team` object.
+    fn intrapy_team(begin: &str, kind: &str, can_report: bool) -> ScaleTeam {
+        ScaleTeam {
+            id: Some(9790052),
+            begin_at: Some(begin.into()),
+            extra: serde_json::json!({
+                "project_name": "RAG against the machine",
+                "user": "dde-paul",
+                "kind": kind,
+                "can_report": can_report,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn intrapy_flat_payload_shows_project_and_corrected() {
+        let now = clock();
+        let duties = eval_duties(&[intrapy_team(&at(now, 30), "evaluator", false)], &[], now);
+        assert_eq!(duties.len(), 1);
+        assert_eq!(duties[0].scale_team_id, Some(9790052));
+        assert_eq!(
+            duties[0].project.as_deref(),
+            Some("RAG against the machine")
+        );
+        assert_eq!(duties[0].logins, vec!["dde-paul".to_owned()]);
+    }
+
+    #[test]
+    fn received_evaluations_are_not_duties_to_give() {
+        let now = clock();
+        let duties = eval_duties(&[intrapy_team(&at(now, 30), "corrected", false)], &[], now);
+        assert!(duties.is_empty());
+    }
+
+    #[test]
+    fn pending_report_survives_past_window() {
+        let now = clock();
+        // Window ended 3h ago, grid never submitted — still listed.
+        let duties = eval_duties(&[intrapy_team(&at(now, -180), "evaluator", true)], &[], now);
+        assert_eq!(duties.len(), 1);
+        // Reported — gone, even while `can_report` lingers true.
+        let mut done = intrapy_team(&at(now, -180), "evaluator", true);
+        done.final_mark = Some(100);
+        assert!(eval_duties(&[done], &[], now).is_empty());
+        // Window closed without the right to report — gone.
+        let duties = eval_duties(&[intrapy_team(&at(now, -180), "evaluator", false)], &[], now);
+        assert!(duties.is_empty());
     }
 }

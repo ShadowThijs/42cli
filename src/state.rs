@@ -171,6 +171,9 @@ pub struct ClonePrompt {
     pub focus: u8,
     /// Path candidates for the destination (Tab completion).
     pub completions: Option<String>,
+    /// Opened from the evaluation view: the destination persists under
+    /// `eval_default_path` instead of `clone_dest`.
+    pub eval: bool,
 }
 
 /// The ssh-passphrase popup: the clone parameters to retry plus the masked
@@ -217,6 +220,11 @@ pub struct EvalView {
     /// Selected row: `0..questions.len()` are questions, then flags,
     /// then comment, then submit.
     pub sel: usize,
+    /// Scale-pane scroll of the last render. Draw only sees `&App`, so
+    /// this is a cell the UI thread mutates single-handedly (same pattern
+    /// as the subject viewer's heights) — keeping it across frames gives
+    /// the scrolling its hysteresis.
+    pub scroll: std::cell::Cell<u16>,
     pub submitting: bool,
     /// Submit confirmation popup open.
     pub confirming: bool,
@@ -232,6 +240,7 @@ impl EvalView {
             comment: CommentDraft::default(),
             editing_comment: false,
             sel: 0,
+            scroll: std::cell::Cell::new(0),
             submitting: false,
             confirming: false,
         }

@@ -60,6 +60,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let Some(view) = &app.eval_view else {
         return;
     };
+    // Full-screen overlay: wipe the underlying screen first so the form
+    // is opaque instead of showing the tab behind it.
+    frame.render_widget(Clear, area);
     let block = theme::pane(false).title(Span::styled(" evaluation ", theme::title()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -118,9 +121,9 @@ fn draw_header(frame: &mut Frame, view: &EvalView, form: &EvalForm, area: Rect) 
     );
     let mut lines = vec![Line::from(Span::styled(title, theme::bright()))];
     if let Some(repo) = &form.repo {
-        let width = area.width.saturating_sub(2) as usize;
+        let width = area.width.saturating_sub(16) as usize;
         lines.push(Line::from(Span::styled(
-            util::truncate_str(repo, width),
+            format!("{}  (g clones it)", util::truncate_str(repo, width)),
             theme::muted(),
         )));
     }
@@ -137,124 +140,244 @@ fn draw_header(frame: &mut Frame, view: &EvalView, form: &EvalForm, area: Rect) 
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Left pane: sections with one row per question, the selected question's
-/// guidelines expanded underneath.
+/// Left pane: sections; every question reads top-down — title, the
+/// requirement text, then its answer control — one blank line apart.
 fn draw_questions(frame: &mut Frame, view: &EvalView, form: &EvalForm, area: Rect) {
-    let block = theme::pane(false).title(Span::styled(" scale ", theme::title()));
+    let block = theme::pane(view.sel < view.answers.len())
+        .title(Span::styled(" scale ", theme::title()));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let width = inner.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::new();
-    let mut question_rows: Vec<usize> = Vec::new();
+    // First and last (control) row of every question block — scrolling
+    // keeps the whole block (title, description, buttons) on screen, not
+    // just its title.
+    let mut blocks: Vec<(usize, usize)> = Vec::new();
     for section in &form.sections {
         lines.push(Line::from(Span::styled(
             section.title.clone(),
             Style::default().fg(theme::DIM).add_modifier(Modifier::BOLD),
         )));
         for question in &section.questions {
-            let index = question_rows.len();
+            let index = blocks.len();
             let selected = view.sel == index;
-            question_rows.push(lines.len());
-            lines.push(question_row(
+            let start = lines.len();
+            lines.push(Line::from(vec![
+                Span::styled(if selected { "▸ " } else { "  " }, theme::muted()),
+                Span::styled(
+                    question.name.clone(),
+                    if selected {
+                        theme::bright()
+                    } else {
+                        theme::text()
+                    },
+                ),
+            ]));
+            if !question.guidelines.is_empty() {
+                lines.extend(guideline_lines(&question.guidelines, width));
+            }
+            lines.push(Line::from(control_spans(
                 question,
                 view.answers.get(index),
-                selected,
-                width,
-            ));
-            if selected && !question.guidelines.is_empty() {
-                for mut line in util::wrap_lines(&question.guidelines, width, 10) {
-                    line.spans.insert(0, Span::styled("  ", theme::muted()));
-                    lines.push(line);
-                }
-            }
+            )));
+            // The control is the last row pushed; the separator follows.
+            blocks.push((start, lines.len().saturating_sub(1)));
+            lines.push(Line::from(""));
         }
     }
 
-    // Keep the selected question's row on screen.
+    // Keep the selected question's whole block on screen — and only move
+    // the window when it would clip, so scrolling back never snaps.
     let visible = inner.height as usize;
-    let target = question_rows.get(view.sel).copied().unwrap_or(0);
-    let scroll = target.saturating_sub(visible.saturating_sub(1));
+    let mut scroll = view.scroll.get() as usize;
+    if visible > 0
+        && let Some(&(start, end)) = blocks.get(view.sel)
+    {
+        if scroll > start {
+            // Block start scrolled off the top: pull it back.
+            scroll = start;
+        } else if end - start < visible && end >= scroll + visible {
+            // Control row below the fold (block fits the pane): extend
+            // just enough for the whole block.
+            scroll = end.saturating_sub(visible.saturating_sub(1));
+        }
+    }
+    scroll = scroll.min(lines.len().saturating_sub(visible));
+    view.scroll.set(scroll as u16);
     let shown: Vec<Line> = lines.into_iter().skip(scroll).take(visible).collect();
     frame.render_widget(Paragraph::new(shown), inner);
 }
 
-/// One question row: name on the left, its answer control on the right.
-fn question_row(
+/// The answer control under a question: `[ Yes ] [ No ]` buttons, the
+/// choice chips, or the slider bar.
+fn control_spans(
     question: &EvalQuestion,
     answer: Option<&AnswerInput>,
-    selected: bool,
-    width: usize,
-) -> Line<'static> {
-    let marker = if selected { "▸ " } else { "  " };
-    let name = util::truncate_str(&question.name, width.saturating_sub(24).max(10));
-    let name_style = if selected {
-        theme::bright()
-    } else {
-        theme::text()
-    };
-    let control = match (&question.kind, answer) {
-        (QuestionKind::Boolean { .. }, Some(AnswerInput::Boolean(yes))) => boolean_spans(*yes),
-        (QuestionKind::Choice { options }, Some(AnswerInput::Choice(index))) => {
-            let label = options
-                .get(*index)
-                .map(|option| option.label.clone())
-                .unwrap_or_default();
-            vec![Span::styled(label, theme::bright())]
+) -> Vec<Span<'static>> {
+    match &question.kind {
+        QuestionKind::Boolean { .. } => boolean_spans(answer),
+        QuestionKind::Choice { options } => {
+            let mut spans = Vec::new();
+            for (index, option) in options.iter().enumerate() {
+                let selected =
+                    matches!(answer, Some(AnswerInput::Choice(current)) if *current == index);
+                if index > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                spans.push(chip(format!(" {} ", option.label), selected, theme::ACCENT));
+            }
+            spans
         }
-        (QuestionKind::Range { max, .. }, Some(AnswerInput::Range(current))) => vec![
-            Span::styled(bar(*current, *max, 10), Style::default().fg(theme::ACCENT)),
-            Span::styled(format!(" {current}/{max}"), theme::muted()),
-        ],
-        _ => vec![Span::styled("—", theme::muted())],
-    };
-    let mut spans = vec![
-        Span::styled(marker, theme::muted()),
-        Span::styled(name, name_style),
-    ];
-    let used: usize = spans.iter().map(|span| span.content.width()).sum();
-    let control_width: usize = control.iter().map(|span| span.content.width()).sum();
-    let pad = width.saturating_sub(used + control_width + 1);
-    spans.push(Span::raw(" ".repeat(pad + 1)));
-    spans.extend(control);
-    Line::from(spans)
+        QuestionKind::Range { max, .. } => {
+            let current = match answer {
+                Some(AnswerInput::Range(value)) => *value,
+                _ => 0,
+            };
+            vec![
+                Span::styled(bar(current, *max, 12), Style::default().fg(theme::ACCENT)),
+                Span::styled(format!(" {current}/{max}"), theme::muted()),
+            ]
+        }
+    }
 }
 
-fn boolean_spans(yes: bool) -> Vec<Span<'static>> {
-    let (yes_style, no_style) = if yes {
-        (theme::good(), theme::muted())
-    } else {
-        (theme::muted(), theme::error())
-    };
+/// `[ Yes ]  [ No ]` — Yes drawn left, matching the ←/→ keys: ← picks the
+/// left button (Yes), → the right one (No).
+fn boolean_spans(answer: Option<&AnswerInput>) -> Vec<Span<'static>> {
+    let yes = matches!(answer, Some(AnswerInput::Boolean(true)));
+    let no = matches!(answer, Some(AnswerInput::Boolean(false)));
     vec![
-        Span::styled("● Yes", yes_style),
-        Span::styled("  ", theme::muted()),
-        Span::styled("● No", no_style),
+        chip(" Yes ".to_owned(), yes, theme::GOOD),
+        Span::raw("  "),
+        chip(" No ".to_owned(), no, theme::ERR),
     ]
+}
+
+/// The requirement text as the web page shows it: paragraphs, `- ` bullet
+/// lists (drawn as •) and backticked `code` fragments in accent — blank
+/// lines separate paragraphs, long lines wrap with a hanging indent.
+fn guideline_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    let text_width = width.saturating_sub(6).max(8);
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for source in text.split('\n') {
+        if source.is_empty() {
+            out.push(Line::from(""));
+            continue;
+        }
+        let (marker, content) = match source.strip_prefix("- ") {
+            Some(rest) => ("  • ", rest),
+            None => ("    ", source),
+        };
+        for (index, row) in wrap_words(&styled_words(content), text_width)
+            .into_iter()
+            .enumerate()
+        {
+            let mut spans = vec![Span::raw(if index == 0 { marker } else { "    " })];
+            spans.extend(row);
+            out.push(Line::from(spans));
+        }
+    }
+    out
+}
+
+/// Words with their style: `code` segments render in accent, the rest
+/// muted — the backticks themselves are dropped.
+fn styled_words(text: &str) -> Vec<(Style, String)> {
+    text.split('`')
+        .enumerate()
+        .flat_map(|(index, segment)| {
+            let style = if index % 2 == 1 {
+                Style::default().fg(theme::ACCENT)
+            } else {
+                theme::muted()
+            };
+            segment
+                .split_whitespace()
+                .map(move |word| (style, word.to_owned()))
+        })
+        .collect()
+}
+
+/// Greedy word wrap over styled words; each row is ready-to-render spans.
+/// Single words wider than the line (long commands, URLs) hard-split.
+fn wrap_words(words: &[(Style, String)], width: usize) -> Vec<Vec<Span<'static>>> {
+    use unicode_width::UnicodeWidthChar;
+    let width = width.max(8);
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::new();
+    let mut row: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for (style, word) in words {
+        if word.width() > width {
+            for ch in word.chars() {
+                let char_width = ch.width().unwrap_or(0);
+                if used + char_width > width && !row.is_empty() {
+                    rows.push(std::mem::take(&mut row));
+                    used = 0;
+                }
+                row.push(Span::styled(ch.to_string(), *style));
+                used += char_width;
+            }
+            continue;
+        }
+        if !row.is_empty() && used + 1 + word.width() > width {
+            rows.push(std::mem::take(&mut row));
+            used = 0;
+        }
+        if !row.is_empty() {
+            row.push(Span::raw(" "));
+            used += 1;
+        }
+        row.push(Span::styled(word.clone(), *style));
+        used += word.width();
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+/// A pressable-looking label: inverted when selected, muted otherwise.
+fn chip(label: String, selected: bool, color: ratatui::style::Color) -> Span<'static> {
+    if selected {
+        Span::styled(
+            label,
+            Style::default()
+                .fg(ratatui::style::Color::Black)
+                .bg(color)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(label, theme::muted())
+    }
 }
 
 /// Right pane: the flag selector with its grading consequence, the
 /// comment editor and the submit row.
 fn draw_right(frame: &mut Frame, tick: u64, view: &EvalView, form: &EvalForm, area: Rect) {
-    let rows = Layout::vertical([
-        Constraint::Length(6),
-        Constraint::Min(5),
-        Constraint::Length(3),
-    ])
-    .spacing(1)
-    .split(area);
     let question_count = view.answers.len();
 
     // -- flags ---------------------------------------------------------
-    let flag_block =
-        theme::pane(view.sel == question_count).title(Span::styled(" ratings ", theme::title()));
-    let flag_inner = flag_block.inner(rows[0]);
-    frame.render_widget(flag_block, rows[0]);
+    // Parse order is positive-first: the positive ratings (Ok,
+    // Outstanding) wrap on their own, then a hard separator introduces the
+    // flags that end the evaluation with 0 — the two groups must never
+    // read as one list. The pane is sized after its content.
+    let width = area.width.saturating_sub(2) as usize;
     let mut flag_lines: Vec<Line> = Vec::new();
     let mut current: Vec<Span> = Vec::new();
-    let width = flag_inner.width.saturating_sub(2) as usize;
     let mut used = 0usize;
+    let positives = form.flags.iter().take_while(|flag| flag.positive).count();
     for (index, flag) in form.flags.iter().enumerate() {
+        if index == positives {
+            if !current.is_empty() {
+                flag_lines.push(Line::from(std::mem::take(&mut current)));
+            }
+            used = 0;
+            flag_lines.push(Line::from(Span::styled(
+                "── ends the evaluation with 0 ──",
+                theme::muted(),
+            )));
+        }
         let selected = index == view.flag;
         let style = if selected {
             Style::default()
@@ -269,14 +392,14 @@ fn draw_right(frame: &mut Frame, tick: u64, view: &EvalView, form: &EvalForm, ar
         } else {
             theme::muted()
         };
-        let chip = format!(" {} ", flag.name);
-        let chip_width = chip.width();
-        if used + chip_width > width && !current.is_empty() {
+        let label = format!(" {} ", flag.name);
+        let label_width = label.width();
+        if used + label_width > width && !current.is_empty() {
             flag_lines.push(Line::from(std::mem::take(&mut current)));
             used = 0;
         }
-        current.push(Span::styled(chip, style));
-        used += chip_width;
+        current.push(Span::styled(label, style));
+        used += label_width;
     }
     if !current.is_empty() {
         flag_lines.push(Line::from(current));
@@ -291,6 +414,18 @@ fn draw_right(frame: &mut Frame, tick: u64, view: &EvalView, form: &EvalForm, ar
             },
         )));
     }
+
+    let rows = Layout::vertical([
+        Constraint::Length(flag_lines.len() as u16 + 2),
+        Constraint::Min(5),
+        Constraint::Length(3),
+    ])
+    .spacing(1)
+    .split(area);
+    let flag_block =
+        theme::pane(view.sel == question_count).title(Span::styled(" ratings ", theme::title()));
+    let flag_inner = flag_block.inner(rows[0]);
+    frame.render_widget(flag_block, rows[0]);
     frame.render_widget(Paragraph::new(flag_lines), flag_inner);
 
     // -- comment ---------------------------------------------------------
@@ -316,22 +451,44 @@ fn draw_right(frame: &mut Frame, tick: u64, view: &EvalView, form: &EvalForm, ar
     );
 }
 
-/// The closing comment: a window of lines around the cursor.
+/// The closing comment: a window of lines around the cursor. Lines are
+/// sliced to the pane width — while typing, the window follows the cursor
+/// horizontally, so long lines never spill past the border.
 fn draw_comment(frame: &mut Frame, view: &EvalView, area: Rect) {
+    use unicode_width::UnicodeWidthChar;
     let height = area.height as usize;
+    let text_width = area.width.saturating_sub(4) as usize; // ">NNN " gutter
     let (row, col) = view.comment.cursor();
     let first = row.saturating_sub(height.saturating_sub(1));
+    let hoff = if view.editing_comment {
+        col.saturating_sub(text_width.saturating_sub(1))
+    } else {
+        0
+    };
     let mut lines: Vec<Line> = Vec::new();
     for index in first..(first + height).min(view.comment.line_count()) {
+        let line = view.comment.line(index);
+        let visible: String = line
+            .chars()
+            .skip(hoff)
+            .scan(0usize, |used, ch| {
+                let width = ch.width().unwrap_or(0);
+                if *used + width > text_width {
+                    return None;
+                }
+                *used += width;
+                Some(ch)
+            })
+            .collect();
         let mut spans = vec![Span::styled(
             format!("{:>3} ", index + 1),
             Style::default().fg(theme::DIM),
         )];
-        let line = view.comment.line(index);
         if view.editing_comment && index == row {
-            let before: String = line.chars().take(col).collect();
-            let at: String = line.chars().skip(col).take(1).collect();
-            let after: String = line.chars().skip(col + 1).collect();
+            let cursor = col - hoff;
+            let before: String = visible.chars().take(cursor).collect();
+            let at: String = visible.chars().skip(cursor).take(1).collect();
+            let after: String = visible.chars().skip(cursor + 1).collect();
             spans.push(Span::styled(before, theme::text()));
             spans.push(Span::styled(
                 if at.is_empty() { " ".into() } else { at },
@@ -341,7 +498,7 @@ fn draw_comment(frame: &mut Frame, view: &EvalView, area: Rect) {
             ));
             spans.push(Span::styled(after, theme::text()));
         } else {
-            spans.push(Span::styled(line.to_owned(), theme::text()));
+            spans.push(Span::styled(visible, theme::text()));
         }
         lines.push(Line::from(spans));
     }
@@ -373,7 +530,7 @@ fn draw_footer(frame: &mut Frame, view: &EvalView, area: Rect) {
     let hint = if view.editing_comment {
         "chars/Enter/Backspace type · Esc done"
     } else {
-        "j/k move · ←/→ or y/n answer · ←/→ flag · Enter comment · F finish · Esc close"
+        "Tab pane · j/k move · ←/→ or y/n answer · ←/→ flag · g clone repo · F finish · Esc close"
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(hint, theme::muted()))),
@@ -381,16 +538,13 @@ fn draw_footer(frame: &mut Frame, view: &EvalView, area: Rect) {
     );
 }
 
-/// The final confirmation popup: submitting is irreversible.
+/// The final confirmation popup: submitting is irreversible, so it
+/// recaps exactly what the POST will carry.
 fn draw_confirm(frame: &mut Frame, view: &EvalView, area: Rect) {
     let Some(form) = view.form.data() else {
         return;
     };
-    let popup = centered(area, 60, 12);
-    let block = theme::pane(true).title(Span::styled(" finish evaluation? ", theme::title()));
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
+    let (yes, no, details) = submission_summary(form, view);
     let flag = form.flags.get(view.flag);
     let mut lines = vec![
         Line::from(Span::styled(
@@ -408,16 +562,28 @@ fn draw_confirm(frame: &mut Frame, view: &EvalView, area: Rect) {
                 theme::error()
             },
         )),
-        Line::from(Span::styled(
-            format!(
-                "comment  {} chars — {:?}",
-                view.comment.char_count(),
-                util::truncate_str(&view.comment.text(), 40)
-            ),
-            theme::text(),
-        )),
-        Line::from(""),
     ];
+    if yes + no > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("answers  {yes} yes · {no} no"),
+            theme::text(),
+        )));
+    }
+    for detail in details {
+        lines.push(Line::from(Span::styled(
+            format!("         {detail}"),
+            theme::muted(),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        format!(
+            "comment  {} chars — {:?}",
+            view.comment.char_count(),
+            util::truncate_str(&view.comment.text(), 40)
+        ),
+        theme::text(),
+    )));
+    lines.push(Line::from(""));
     if let Some(consequence) = flag.and_then(flag_consequence) {
         lines.push(Line::from(Span::styled(consequence, theme::error())));
         lines.push(Line::from(""));
@@ -426,7 +592,50 @@ fn draw_confirm(frame: &mut Frame, view: &EvalView, area: Rect) {
         "y submit · anything else cancels",
         theme::bright(),
     )));
+
+    let popup = centered(area, 60, lines.len() as u16 + 2);
+    let block = theme::pane(true).title(Span::styled(" finish evaluation? ", theme::title()));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// What the submission would send: the boolean tally (yes/no) plus one
+/// row per slider (`name: value/max`) and choice (`name: label`), in
+/// question order.
+fn submission_summary(form: &EvalForm, view: &EvalView) -> (u32, u32, Vec<String>) {
+    let mut yes = 0u32;
+    let mut no = 0u32;
+    let mut details = Vec::new();
+    for (answer, question) in view.answers.iter().zip(form.questions().iter()) {
+        match &question.kind {
+            QuestionKind::Boolean { .. } => match answer.submit_value(question).as_str() {
+                "1" => yes += 1,
+                _ => no += 1,
+            },
+            QuestionKind::Range { max, .. } => {
+                if let AnswerInput::Range(value) = answer {
+                    details.push(format!(
+                        "{}: {value}/{max}",
+                        util::truncate_str(&question.name, 24)
+                    ));
+                }
+            }
+            QuestionKind::Choice { options } => {
+                if let AnswerInput::Choice(index) = answer
+                    && let Some(option) = options.get(*index)
+                {
+                    details.push(format!(
+                        "{}: {}",
+                        util::truncate_str(&question.name, 24),
+                        option.label
+                    ));
+                }
+            }
+        }
+    }
+    (yes, no, details)
 }
 
 /// What the guidelines promise: negative flags end the grading with a 0,
@@ -445,6 +654,18 @@ pub fn flag_consequence(flag: &crate::api::models::EvalFlag) -> Option<&'static 
 // ---------------------------------------------------------- interaction ----
 
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
+    // `g` clones the evaluated repo — the clone prompt overlays the form.
+    // While typing the comment (or submitting) it stays a plain character,
+    // and the confirm popup keeps "anything cancels".
+    let typing = matches!(
+        &app.eval_view,
+        Some(view) if view.editing_comment || view.submitting || view.confirming
+    );
+    if !typing && key.code == KeyCode::Char('g') {
+        crate::ui::projects::open_repo_clone(app);
+        return Action::Continue;
+    }
+
     let Some(view) = &mut app.eval_view else {
         return Action::Continue;
     };
@@ -465,13 +686,43 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     }
 
     let question_count = view.answers.len();
-    let last_row = question_count + 2;
     match key.code {
         KeyCode::Esc => {
             app.eval_view = None;
         }
-        KeyCode::Down | KeyCode::Char('j') => view.sel = (view.sel + 1).min(last_row),
-        KeyCode::Up | KeyCode::Char('k') => view.sel = view.sel.saturating_sub(1),
+        // Tab walks the panes: scale -> ratings -> comment -> scale.
+        KeyCode::Tab => {
+            view.sel = if view.sel < question_count {
+                question_count
+            } else if view.sel == question_count {
+                question_count + 1
+            } else {
+                0
+            };
+        }
+        KeyCode::BackTab => {
+            view.sel = if view.sel < question_count {
+                question_count + 1
+            } else if view.sel == question_count {
+                0
+            } else {
+                question_count
+            };
+        }
+        // j/k stay inside the pane: questions for the scale, the comment
+        // cursor for the comment; the ratings are one row, ←/→ cycle them.
+        KeyCode::Down | KeyCode::Char('j') => match view.sel {
+            index if index < question_count => {
+                view.sel = (index + 1).min(question_count.saturating_sub(1));
+            }
+            index if index == question_count + 1 => view.comment.down(),
+            _ => {}
+        },
+        KeyCode::Up | KeyCode::Char('k') => match view.sel {
+            index if index < question_count => view.sel = index.saturating_sub(1),
+            index if index == question_count + 1 => view.comment.up(),
+            _ => {}
+        },
         KeyCode::Char('F' | 'f') => try_confirm(app),
         KeyCode::Enter => match view.sel {
             index if index < question_count => toggle_question(app, index),
@@ -577,8 +828,10 @@ fn adjust_question(app: &mut App, index: usize, direction: i64) {
     };
     match &question.kind {
         QuestionKind::Boolean { .. } => {
+            // ← lands on Yes (the left button), → on No — same side as
+            // the buttons drawn under the question.
             if let Some(AnswerInput::Boolean(yes)) = view.answers.get_mut(index) {
-                *yes = direction > 0;
+                *yes = direction < 0;
             }
         }
         QuestionKind::Choice { options } => {
@@ -803,6 +1056,78 @@ mod tests {
             flag_consequence(&crash),
             Some("grading stops here — final grade 0")
         );
+    }
+
+    #[test]
+    fn guidelines_render_bullets_and_code() {
+        let lines = guideline_lines("Check:\n\n- keep `uv sync` green", 60);
+        let flat: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect()
+            })
+            .collect();
+        // Paragraph line, blank separator, then the bullet item.
+        assert_eq!(flat[0].trim_end(), "    Check:");
+        assert_eq!(flat[1], "");
+        assert!(flat[2].starts_with("  • keep uv sync green"));
+        // The `code` fragment carries the accent style, its backticks are
+        // gone.
+        assert!(
+            lines[2]
+                .spans
+                .iter()
+                .any(|span| span.style.fg == Some(theme::ACCENT))
+        );
+        assert!(!flat[2].contains('`'));
+        // Long items wrap with the hanging indent, not the bullet column.
+        let long = format!("- {} end", "word ".repeat(30));
+        let wrapped = guideline_lines(&long, 40);
+        assert!(wrapped.len() > 1);
+        let flat: String = wrapped
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(flat.contains("\n    "));
+    }
+
+    #[test]
+    fn confirm_summary_counts_yes_no_and_details() {
+        let mut form = slider_form();
+        form.sections[0].questions[0].kind = QuestionKind::Boolean { yes: false };
+        form.sections[0].questions[1].kind = QuestionKind::Choice {
+            options: vec![
+                crate::api::models::EvalChoice {
+                    value: "a".into(),
+                    label: "A".into(),
+                    selected: false,
+                },
+                crate::api::models::EvalChoice {
+                    value: "b".into(),
+                    label: "B".into(),
+                    selected: true,
+                },
+            ],
+        };
+        let mut view = EvalView::open(1);
+        view.apply_form(form);
+        view.answers[0] = AnswerInput::Boolean(true);
+        view.answers[2] = AnswerInput::Range(15);
+        let (yes, no, details) = submission_summary(view.form.data().unwrap(), &view);
+        // Boolean tallied by what it sends, sliders show value/max and
+        // the choice shows its label — all in question order.
+        assert_eq!((yes, no), (1, 0));
+        assert_eq!(details, vec!["q2: B".to_owned(), "q3: 15/25".to_owned()]);
     }
 
     #[test]

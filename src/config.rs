@@ -68,6 +68,9 @@ pub fn clear_session() {
 pub struct Settings {
     /// Last used `g` clone destination directory.
     pub clone_dest: Option<String>,
+    /// Last used `g` clone destination inside the evaluation view —
+    /// evaluated repos usually live elsewhere than your own projects.
+    pub eval_default_path: Option<String>,
 }
 
 fn settings_path() -> PathBuf {

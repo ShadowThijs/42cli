@@ -226,14 +226,49 @@ pub struct Corrected {
 }
 
 impl ScaleTeam {
-    /// Project under evaluation — the `/users/me/scale_teams` payload
-    /// nests it as `team.project.name` (kept in `extra`).
+    /// Project under evaluation. The v2 `/users/me/scale_teams` payload
+    /// nests it as `team.project.name`, intrapy flattens it to
+    /// `project_name` — both survive into `extra`.
     pub fn project_name(&self) -> Option<&str> {
         self.extra
-            .get("team")?
-            .get("project")?
-            .get("name")?
-            .as_str()
+            .get("team")
+            .and_then(|team| team.get("project"))
+            .and_then(|project| project.get("name"))
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| self.extra.get("project_name")?.as_str())
+    }
+
+    /// Logins of the students under evaluation. The v2 payload nests them
+    /// in `correcteds[]`; intrapy flattens a single one into `user` (the
+    /// caller drops entries whose `kind` is not "evaluator" — there a
+    /// non-evaluator `user` names the corrector, i.e. me).
+    pub fn corrected_logins(&self) -> Vec<String> {
+        let nested: Vec<String> = self
+            .correcteds
+            .iter()
+            .filter_map(|corrected| corrected.login.clone())
+            .collect();
+        if !nested.is_empty() {
+            return nested;
+        }
+        self.extra
+            .get("user")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    }
+
+    /// True while the correction still expects a grid: the window may
+    /// already be over (intrapy keeps `can_report` true until the report
+    /// lands), but no mark was recorded.
+    pub fn needs_report(&self) -> bool {
+        self.final_mark.is_none()
+            && self
+                .extra
+                .get("can_report")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
     }
 }
 

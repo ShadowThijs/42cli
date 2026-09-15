@@ -29,6 +29,17 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         handle_notification_key(app, key);
         return Action::Continue;
     }
+    // The clone flow's popups sit on top of everything — they can open
+    // from the projects tab and from inside the evaluation view (`g` on
+    // the evaluated repo) — and must swallow F-keys and global shortcuts.
+    if app.projects.clone_prompt.is_some() {
+        ui::projects::handle_clone_prompt_key(app, key);
+        return Action::Continue;
+    }
+    if app.projects.passphrase_prompt.is_some() {
+        return ui::projects::handle_passphrase_prompt_key(app, key);
+    }
+
     // The subject viewer is a full-screen overlay: it swallows everything.
     if app.subject_view.is_some() {
         ui::subject::handle_key(app, key);
@@ -39,17 +50,6 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     if app.eval_view.is_some() {
         ui::eval::handle_key(app, key);
         return Action::Continue;
-    }
-
-    // The clone prompt is a proper overlay too — it must swallow F-keys and
-    // global shortcuts while destination / folder name are being typed.
-    if app.projects.clone_prompt.is_some() {
-        ui::projects::handle_clone_prompt_key(app, key);
-        return Action::Continue;
-    }
-    // So is the ssh-passphrase retry popup it can lead to.
-    if app.projects.passphrase_prompt.is_some() {
-        return ui::projects::handle_passphrase_prompt_key(app, key);
     }
     // So is the post-clone "open in editor?" popup.
     if app.projects.editor_prompt.is_some() {

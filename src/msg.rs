@@ -141,7 +141,12 @@ impl App {
                 match result {
                     Ok(_) => {
                         self.set_status(format!("cloned into {path}"));
-                        self.projects.editor_prompt = Some(path);
+                        // The editor hand-off replaces this process, which
+                        // would discard an in-progress evaluation — only
+                        // offer it outside the eval view.
+                        if self.eval_view.is_none() {
+                            self.projects.editor_prompt = Some(path);
+                        }
                     }
                     Err(error) => self.set_status(format!("clone failed: {error}")),
                 }

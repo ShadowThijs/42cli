@@ -34,6 +34,13 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .split(top[1]);
     draw_list(frame, app, columns[0]);
     draw_detail(frame, app, columns[1]);
+    draw_prompts(frame, app, area);
+}
+
+/// The clone flow's popups — `g` prompt, ssh-passphrase retry, editor
+/// hand-off. Drawn by the projects tab and, on top of the eval overlay,
+/// by `ui::draw` (the evaluated repo can be cloned from the form).
+pub fn draw_prompts(frame: &mut Frame, app: &App, area: Rect) {
     draw_clone_prompt(frame, app, area);
     draw_passphrase_prompt(frame, app, area);
     draw_editor_prompt(frame, app, area);
@@ -689,16 +696,45 @@ fn open_clone_prompt(app: &mut App) {
         app.set_status("no git repository on this project");
         return;
     };
-    let dest = crate::config::load_settings()
-        .clone_dest
-        .unwrap_or_else(|| ".".into());
+    open_clone_prompt_for(app, slug, repo, false);
+}
+
+/// Same for the repo of the evaluation being filled (`g` in the eval view).
+pub fn open_repo_clone(app: &mut App) {
+    let Some((repo, project)) = app
+        .eval_view
+        .as_ref()
+        .and_then(|view| view.form.data())
+        .map(|form| (form.repo.clone(), form.project.clone()))
+    else {
+        return;
+    };
+    let Some(repo) = repo else {
+        app.set_status("this evaluation has no repository");
+        return;
+    };
+    open_clone_prompt_for(app, project, repo, true);
+}
+
+/// Shared `g` prompt constructor: destination from the persisted settings
+/// (`clone_dest` for projects, `eval_default_path` for evaluation repos),
+/// folder name empty (git picks the repo's own name).
+fn open_clone_prompt_for(app: &mut App, slug: String, repo: String, eval: bool) {
+    let settings = crate::config::load_settings();
+    let dest = if eval {
+        settings.eval_default_path
+    } else {
+        settings.clone_dest
+    }
+    .unwrap_or_else(|| ".".into());
     app.projects.clone_prompt = Some(crate::state::ClonePrompt {
+        slug,
         repo,
         dest: tui_input::Input::new(dest),
         name: tui_input::Input::new(String::new()),
-        slug,
         focus: 0,
         completions: None,
+        eval,
     });
 }
 
@@ -708,15 +744,20 @@ fn submit_clone(app: &mut App) {
     };
     let dest = prompt.dest.value().trim().to_owned();
     let name = prompt.name.value().trim().to_owned();
-    let (slug, repo) = (prompt.slug.clone(), prompt.repo.clone());
+    let (slug, repo, eval) = (prompt.slug.clone(), prompt.repo.clone(), prompt.eval);
     if dest.is_empty() {
         app.set_status("a destination directory is required");
         return;
     }
 
-    // Remember the destination across sessions.
+    // Remember the destination across sessions — project clones and
+    // evaluation clones keep their own default.
     let mut settings = crate::config::load_settings();
-    settings.clone_dest = Some(dest.clone());
+    if eval {
+        settings.eval_default_path = Some(dest.clone());
+    } else {
+        settings.clone_dest = Some(dest.clone());
+    }
     let _ = crate::config::save_settings(&settings);
 
     app.projects.clone_prompt = None;

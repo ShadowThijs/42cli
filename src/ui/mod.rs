@@ -55,11 +55,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     if app.subject_view.is_some() {
         subject::draw(frame, app, area);
-        return;
-    }
-    if app.eval_view.is_some() {
+    } else if app.eval_view.is_some() {
         eval::draw(frame, app, area);
-        return;
+    }
+    // The clone flow's popups can open from the projects tab and from
+    // inside the evaluation view — draw them over any overlay.
+    if app.projects.clone_prompt.is_some()
+        || app.projects.passphrase_prompt.is_some()
+        || app.projects.editor_prompt.is_some()
+    {
+        projects::draw_prompts(frame, app, area);
     }
     if app.notifications_open {
         draw_notifications(frame, app, area);

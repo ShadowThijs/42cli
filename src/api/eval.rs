@@ -47,6 +47,13 @@ impl Api {
     /// the 302 — the corrected's project page; a redirect back to the
     /// form means the server refused (already submitted or invalid).
     pub async fn submit_evaluation(&self, submission: &EvalSubmission) -> ApiResult<String> {
+        // The page's form action is a relative path ("/projects/…") — the
+        // browser resolves it against the host; reqwest needs it anchored.
+        let url = if submission.action.starts_with('/') {
+            format!("{PROJECTS_BASE}{}", submission.action)
+        } else {
+            submission.action.clone()
+        };
         let send = || async {
             let mut headers = HeaderMap::new();
             headers.insert("Origin", HeaderValue::from_str(PROJECTS_BASE).unwrap());
@@ -61,7 +68,7 @@ impl Api {
             let body = submission_body(submission);
             let resp = self
                 .noredirect
-                .post(&submission.action)
+                .post(&url)
                 .headers(headers)
                 .form(&body[..])
                 .send()
@@ -231,7 +238,10 @@ pub fn parse_eval_form(html: &str) -> ApiResult<EvalForm> {
                 guidelines = Vec::new();
             } else if tag == "div" && classes.contains("scale-question-answers") {
                 if let Some(name) = name.take()
-                    && let Some(question) = parse_question(name, guidelines.join("\n"), &child)
+                    // Paragraphs and lists arrive as separate children —
+                    // a blank line between them mirrors the page.
+                    && let Some(question) =
+                        parse_question(name, guidelines.join("\n\n"), &child)
                 {
                     questions.push(question);
                 }
@@ -297,6 +307,11 @@ pub fn parse_eval_form(html: &str) -> ApiResult<EvalForm> {
     if sections.is_empty() || flags.is_empty() {
         return Err(bad("no sections or flags — not an evaluation page"));
     }
+
+    // Positives (Ok, Outstanding) lead the list — the ratings pane splits
+    // them from the immediate-0 flags below. Stable, so page order holds
+    // within each group.
+    flags.sort_by_key(|flag| !flag.positive);
 
     Ok(EvalForm {
         action,
@@ -419,25 +434,42 @@ fn parse_question(
     })
 }
 
-/// Minimal HTML → readable text: block tags become newlines, tags are
-/// stripped and the common entities decoded. Good enough for the
-/// guidelines blocks, whose prose we re-wrap in the TUI.
+/// Minimal HTML → readable text that mirrors the page's structure:
+/// `<li>` items become `- ` bullets, `<code>` fragments are backticked,
+/// `<p>`/`<ul>` separate paragraphs (rendered as a blank line) and `<br>`
+/// breaks a line. Whitespace inside text runs collapses, so the page's
+/// source formatting never breaks a sentence mid-way.
 pub fn html_to_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut chars = html.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
             '<' => {
+                let closing = chars.peek() == Some(&'/');
                 let mut tag = String::new();
                 for tag_ch in chars.by_ref() {
                     if tag_ch == '>' {
                         break;
                     }
-                    tag.push(tag_ch);
+                    if tag_ch.is_whitespace() && !tag.is_empty() {
+                        // Attributes: skip past the rest of the tag.
+                        for skipped in chars.by_ref() {
+                            if skipped == '>' {
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    if !tag_ch.is_whitespace() {
+                        tag.push(tag_ch.to_ascii_lowercase());
+                    }
                 }
-                let tag = tag.trim().trim_matches('/').to_lowercase();
-                if matches!(tag.as_str(), "br" | "p" | "li" | "ul" | "h3" | "h4" | "hr") {
-                    text.push('\n');
+                match (tag.trim_matches('/'), closing) {
+                    ("li", false) => text.push_str("\n- "),
+                    ("p" | "ul" | "ol", false) => text.push_str("\n\n"),
+                    ("br", _) => text.push('\n'),
+                    ("code", _) => text.push('`'),
+                    _ => {}
                 }
             }
             '&' => {
@@ -471,16 +503,33 @@ pub fn html_to_text(html: &str) -> String {
                     text.push('&');
                 }
             }
+            other if other.is_whitespace() => {
+                // Source formatting collapses to one space; the line
+                // structure comes from the tags alone.
+                if !text.ends_with(' ') && !text.ends_with('\n') {
+                    text.push(' ');
+                }
+            }
             other => text.push(other),
         }
     }
-    // One guideline per line — drop the blank lines the block tags leave
-    // behind and join the rest.
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Trim the lines and collapse the blanks the block tags left into a
+    // single blank line between paragraphs.
+    let mut lines: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            if lines.last().is_some_and(|last| !last.is_empty()) {
+                lines.push("");
+            }
+        } else {
+            lines.push(line);
+        }
+    }
+    while lines.last() == Some(&"") {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -527,6 +576,10 @@ mod tests {
 
         // Flags: two positive, ten negative, Ok preselected.
         assert_eq!(form.flags.len(), 12);
+        // Positives lead the list, negatives trail it (the ratings pane
+        // draws its separator on this split).
+        assert!(form.flags.iter().take(2).all(|flag| flag.positive));
+        assert!(form.flags.iter().skip(2).all(|flag| !flag.positive));
         let ok = form.flags.iter().find(|f| f.name == "Ok").unwrap();
         assert!(ok.positive && ok.id == 1);
         let outstanding = form.flags.iter().find(|f| f.id == 9).unwrap();
@@ -635,11 +688,21 @@ mod tests {
     }
 
     #[test]
-    fn html_to_text_keeps_list_structure_and_decodes_entities() {
+    fn html_to_text_keeps_structure_and_decodes_entities() {
         assert_eq!(
             html_to_text("<p>a &amp; b</p><ul><li>one</li><li>two</li></ul>"),
-            "a & b\none\ntwo"
+            "a & b\n\n- one\n- two"
         );
         assert_eq!(html_to_text("line<br/>next"), "line\nnext");
+        // `code` fragments backtick; entities decode inside them.
+        assert_eq!(
+            html_to_text("<p>run <code>cd x &amp;&amp; uv sync</code> next</p>"),
+            "run `cd x && uv sync` next"
+        );
+        // Source newlines inside an item collapse to spaces.
+        assert_eq!(
+            html_to_text("<li>root,\n   i.e. <code>x</code> y</li>"),
+            "- root, i.e. `x` y"
+        );
     }
 }
