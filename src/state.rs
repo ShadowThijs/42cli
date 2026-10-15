@@ -152,6 +152,8 @@ pub struct ProjectsState {
     pub clone_prompt: Option<ClonePrompt>,
     /// Popup after a clone bounced off a passphrase-protected ssh key.
     pub passphrase_prompt: Option<PassphrasePrompt>,
+    /// Confirm popup for finishing / giving up the selected project.
+    pub team_action_prompt: Option<TeamActionPrompt>,
     /// Folder of a just-finished clone, offered to an editor.
     pub editor_prompt: Option<String>,
     pub focus_details: bool,
@@ -174,6 +176,17 @@ pub struct ClonePrompt {
     /// Opened from the evaluation view: the destination persists under
     /// `eval_default_path` instead of `clone_dest`.
     pub eval: bool,
+}
+
+/// Confirmation popup (`f` finish · `x` give up) before the irreversible
+/// close / give-up request is replayed.
+#[derive(Debug)]
+pub struct TeamActionPrompt {
+    pub slug: String,
+    pub name: String,
+    pub kind: crate::api::models::TeamActionKind,
+    pub url: String,
+    pub token: String,
 }
 
 /// The ssh-passphrase popup: the clone parameters to retry plus the masked

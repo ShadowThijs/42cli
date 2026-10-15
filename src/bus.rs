@@ -46,6 +46,13 @@ pub enum Command {
         slug: String,
         fresh: bool,
     },
+    /// Replay the close (finish) / give-up form of the project's team.
+    TeamAction {
+        slug: String,
+        kind: TeamActionKind,
+        url: String,
+        token: String,
+    },
     DownloadAttachment {
         /// Project display name: documents land in a downloads subfolder
         /// of that name so `subject.pdf` never collides across projects.
@@ -166,6 +173,11 @@ pub enum Msg {
     Schedule {
         slug: String,
         result: Result<Vec<ProjectScheduleEntry>, ApiError>,
+    },
+    TeamActionDone {
+        slug: String,
+        kind: TeamActionKind,
+        result: Result<(), ApiError>,
     },
     DownloadDone {
         name: String,

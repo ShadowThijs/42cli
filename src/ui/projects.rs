@@ -12,7 +12,7 @@ use tui_input::backend::crossterm::EventHandler;
 
 use super::theme;
 use super::widgets;
-use crate::api::models::ProjectDataEntry;
+use crate::api::models::{ProjectDataEntry, TeamActionKind};
 use crate::app::App;
 use crate::input::Action;
 use crate::state::{Loadable, ProjectSegment};
@@ -43,6 +43,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 pub fn draw_prompts(frame: &mut Frame, app: &App, area: Rect) {
     draw_clone_prompt(frame, app, area);
     draw_passphrase_prompt(frame, app, area);
+    draw_team_action_prompt(frame, app, area);
     draw_editor_prompt(frame, app, area);
 }
 
@@ -257,6 +258,16 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                         )));
                     }
                 }
+            }
+            if mine.close_action.is_some() || mine.give_up_action.is_some() {
+                lines.push(Line::from(Span::styled(
+                    match (mine.close_action.is_some(), mine.give_up_action.is_some()) {
+                        (true, true) => "f = finish · x = give up",
+                        (true, false) => "f = finish",
+                        _ => "x = give up",
+                    },
+                    theme::muted(),
+                )));
             }
             if let Some(repo) = &mine.git_repo {
                 lines.push(Line::from(vec![
@@ -488,6 +499,30 @@ fn draw_passphrase_prompt(frame: &mut Frame, app: &App, area: Rect) {
         ))),
         rows[2],
     );
+}
+
+/// Confirmation before the finish / give-up request is sent.
+fn draw_team_action_prompt(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(prompt) = &app.projects.team_action_prompt else {
+        return;
+    };
+    let popup = centered(area, 50, 8);
+    let block = widgets::titled_block(&format!(" {} project ", prompt.kind.verb()), true);
+    let inner = block.inner(popup);
+    frame.render_widget(ratatui::widgets::Clear, popup);
+    frame.render_widget(block, popup);
+    let lines = vec![
+        Line::from(Span::styled(
+            truncate(&prompt.name, inner.width as usize - 2),
+            theme::bright(),
+        )),
+        Line::from(Span::styled(
+            format!("really {} this project?", prompt.kind.verb()),
+            theme::text(),
+        )),
+        Line::from(Span::styled("y confirm · Esc cancel", theme::muted())),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Post-clone popup: jump straight into the fresh folder with an editor.
@@ -815,6 +850,59 @@ pub fn handle_passphrase_prompt_key(app: &mut App, key: KeyEvent) -> Action {
     Action::Continue
 }
 
+/// Keys inside the finish / give-up confirmation: only `y` sends it.
+pub fn handle_team_action_prompt_key(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('y') => {
+            if let Some(prompt) = app.projects.team_action_prompt.take() {
+                app.set_status(format!("{}…", prompt.kind.verb()));
+                app.send(crate::bus::Command::TeamAction {
+                    slug: prompt.slug,
+                    kind: prompt.kind,
+                    url: prompt.url,
+                    token: prompt.token,
+                });
+            }
+        }
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+            app.projects.team_action_prompt = None;
+            app.set_status("cancelled");
+        }
+        _ => {}
+    }
+    Action::Continue
+}
+
+/// `f` / `x`: open the confirmation for the selected project, if its
+/// mine page offers that action.
+fn open_team_action_prompt(app: &mut App, kind: TeamActionKind) {
+    let entries = visible(app);
+    let Some(entry) = entries.get(app.projects.selection) else {
+        return;
+    };
+    let slug = entry.slug.clone().unwrap_or_default();
+    let name = entry.name.clone().unwrap_or_else(|| slug.clone());
+    let action = match app.projects.mine.get(&slug) {
+        Some(Loadable::Ready(mine)) => match kind {
+            TeamActionKind::Close => mine.close_action.clone(),
+            TeamActionKind::GiveUp => mine.give_up_action.clone(),
+        },
+        _ => None,
+    };
+    match action {
+        Some(action) => {
+            app.projects.team_action_prompt = Some(crate::state::TeamActionPrompt {
+                slug,
+                name,
+                kind,
+                url: action.url,
+                token: action.token,
+            });
+        }
+        None => app.set_status(format!("cannot {} this project", kind.verb())),
+    }
+}
+
 /// Keys inside the post-clone "open in editor?" popup.
 pub fn handle_editor_prompt_key(app: &mut App, key: KeyEvent) -> Action {
     let Some(path) = app.projects.editor_prompt.clone() else {
@@ -889,6 +977,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
             KeyCode::Char('v') => open_subject_viewer(app),
             KeyCode::Char('g') => open_clone_prompt(app),
+            KeyCode::Char('f') => open_team_action_prompt(app, TeamActionKind::Close),
+            KeyCode::Char('x') => open_team_action_prompt(app, TeamActionKind::GiveUp),
             _ => {}
         }
         clamp_attachment_sel(app);
@@ -912,6 +1002,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         }
         KeyCode::Char('/') => app.projects.filter_focused = true,
         KeyCode::Char('g') => open_clone_prompt(app),
+        KeyCode::Char('f') => open_team_action_prompt(app, TeamActionKind::Close),
+        KeyCode::Char('x') => open_team_action_prompt(app, TeamActionKind::GiveUp),
         KeyCode::Enter => {
             app.projects.focus_details = true;
             app.projects.attachment_sel = 0;

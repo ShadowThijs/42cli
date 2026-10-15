@@ -36,6 +36,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
         ui::projects::handle_clone_prompt_key(app, key);
         return Action::Continue;
     }
+    if app.projects.team_action_prompt.is_some() {
+        ui::projects::handle_team_action_prompt_key(app, key);
+        return Action::Continue;
+    }
     if app.projects.passphrase_prompt.is_some() {
         return ui::projects::handle_passphrase_prompt_key(app, key);
     }

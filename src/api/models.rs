@@ -513,6 +513,36 @@ pub struct ProjectMine {
     #[serde(default)]
     pub attachments: Vec<Attachment>,
     pub unsub_url: Option<String>,
+    /// "Finish / close" form of the team (`PUT .../teams/{id}/close`).
+    #[serde(default)]
+    pub close_action: Option<TeamAction>,
+    /// "Give up" form of the team (`PUT .../teams/{id}/give_up`).
+    #[serde(default)]
+    pub give_up_action: Option<TeamAction>,
+}
+
+/// A Rails `PUT` form of the mine page: absolute target + the form's
+/// own `authenticity_token` (the page issues one per form).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamAction {
+    pub url: String,
+    pub token: String,
+}
+
+/// Which team action to replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamActionKind {
+    Close,
+    GiveUp,
+}
+
+impl TeamActionKind {
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Close => "finish",
+            Self::GiveUp => "give up",
+        }
+    }
 }
 
 /// One evaluation attempt: who corrected, with which result badge

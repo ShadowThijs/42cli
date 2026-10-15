@@ -128,9 +128,10 @@ impl Api {
     }
 
     /// Scrape `projects.intra.42.fr/{slug}/mine` for team + attachments.
-    /// `mine2` — added evaluation attempts to the cached shape.
+    /// `mine3` — added the close / give-up forms to the cached shape
+    /// (older entries deserialize with them missing).
     pub async fn project_mine(&self, slug: &str, fresh: bool) -> ApiResult<super::ProjectMine> {
-        let key = format!("mine2/{slug}");
+        let key = format!("mine3/{slug}");
         if !fresh {
             if let Some(cached) = self.cache.get::<super::ProjectMine>(&key, TTL_MINE) {
                 return Ok(cached);
@@ -388,6 +389,93 @@ impl Api {
         }
     }
 
+    /// Replay the mine page's close / give-up form: `PUT` through a POST
+    /// with `_method=put` and the form's `authenticity_token`, sent like
+    /// the browser does (Origin + Referer of the mine page). Success is
+    /// the 302 back to `/{slug}/mine`, which reqwest follows. Every attempt
+    /// is logged to `team_action.log` in the cache dir (token redacted).
+    pub async fn project_team_action(&self, slug: &str, url: &str, token: &str) -> ApiResult<()> {
+        let referer = format!("{}/{slug}/mine", super::PROJECTS_BASE);
+        let cookies = ["_intra_42_session_production", "cf_clearance", "user.id"]
+            .iter()
+            .map(|name| {
+                let held = self.cookies.cookie_value("intra.42.fr", name).is_some();
+                format!("{name}={}", if held { "yes" } else { "NO" })
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        log_team_action(&format!("attempt {url} cookies: {cookies}"));
+        let send = || async {
+            let resp = self
+                .http
+                .post(url)
+                .header("Origin", super::PROJECTS_BASE)
+                .header("Referer", &referer)
+                // The same single user action the site's own form sends.
+                .header("User-Agent", BROWSER_USER_AGENT)
+                // A form navigation, as Firefox sends it: without an HTML
+                // `Accept` Rails answers 404 `{}` (JSON format).
+                .header(
+                    "Accept",
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                )
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Upgrade-Insecure-Requests", "1")
+                .header("Sec-Fetch-Dest", "document")
+                .header("Sec-Fetch-Mode", "navigate")
+                .header("Sec-Fetch-Site", "same-origin")
+                .header("Sec-Fetch-User", "?1")
+                .form(&team_action_form(token))
+                .send()
+                .await
+                .inspect_err(|error| log_team_action(&format!("POST {url} -> error: {error}")))?;
+            let status = resp.status();
+            let final_url = resp.url().to_string();
+            let headers = ["server", "content-type", "cf-ray", "cf-mitigated", "x-request-id"]
+                .iter()
+                .filter_map(|name| {
+                    let value = resp.headers().get(*name)?.to_str().ok()?;
+                    Some(format!("{name}={value}"))
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                let snippet = collapse_ws(&body).chars().take(600).collect::<String>();
+                log_team_action(&format!(
+                    "POST {url} (token {}…, referer {referer}) -> {status} final={final_url} {headers}\n  body: {snippet}",
+                    token.chars().take(6).collect::<String>()
+                ));
+                return Err(ApiError::Status(format!(
+                    "team action: HTTP {status} ({headers}) — details in {}",
+                    team_action_log_path().display()
+                )));
+            }
+            log_team_action(&format!(
+                "POST {url} -> {status} final={final_url} {headers}"
+            ));
+            if resp
+                .url()
+                .host_str()
+                .is_some_and(|host| host.contains("signin"))
+            {
+                return Err(ApiError::SessionExpired);
+            }
+            Ok(())
+        };
+        match send().await {
+            Ok(()) => Ok(()),
+            Err(ApiError::SessionExpired) => {
+                if super::auth::bootstrap_intra_session(self).await {
+                    send().await
+                } else {
+                    Err(ApiError::SessionExpired)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Subscribe (`subscribe = true`) or unsubscribe to an event by
     /// replaying the rails-ujs form behind the page footer link: POST with
     /// the page CSRF token, and `_method=delete` in the body to override
@@ -602,7 +690,67 @@ fn parse_project_mine(html: &str) -> Option<super::ProjectMine> {
             .map(str::to_owned);
     }
 
+    mine.close_action = parse_team_action(&document, "/close");
+    mine.give_up_action = parse_team_action(&document, "/give_up");
+
     Some(mine)
+}
+
+/// What the intra's own form submission identifies as (Firefox, as in the
+/// captured requests).
+const BROWSER_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0";
+
+fn team_action_log_path() -> std::path::PathBuf {
+    crate::config::cache_dir().join("team_action.log")
+}
+
+/// Append one timestamped line to the team-action debug log.
+fn log_team_action(line: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(team_action_log_path())
+    {
+        let _ = writeln!(file, "[{}] {line}", chrono::Local::now().to_rfc3339());
+    }
+}
+
+/// Body of the close / give-up request: Rails' `_method` override + token.
+fn team_action_form(token: &str) -> [(&'static str, String); 2] {
+    [
+        ("_method", "put".to_owned()),
+        ("authenticity_token", token.to_owned()),
+    ]
+}
+
+/// Find the team form / link ending in `suffix` (`/close`, `/give_up`).
+/// Prefers the form's own `authenticity_token`; link-style actions fall
+/// back to the page's `csrf-token` meta.
+fn parse_team_action(document: &scraper::Html, suffix: &str) -> Option<super::TeamAction> {
+    use scraper::Selector;
+    let candidates = Selector::parse("form[action], a[href]").ok()?;
+    let token_input = Selector::parse(r#"input[name="authenticity_token"]"#).ok()?;
+    for element in document.select(&candidates) {
+        let target = element.attr("action").or_else(|| element.attr("href"))?;
+        if !target.ends_with(suffix) || !target.contains("/teams/") {
+            continue;
+        }
+        let token = element
+            .select(&token_input)
+            .next()
+            .and_then(|input| input.attr("value"))
+            .map(str::to_owned)
+            .or_else(|| select_attr(document, r#"meta[name="csrf-token"]"#, "content"))?;
+        let url = if target.starts_with("http") {
+            target.to_owned()
+        } else {
+            format!("{}{target}", super::PROJECTS_BASE)
+        };
+        return Some(super::TeamAction { url, token });
+    }
+    None
 }
 
 /// Parse `/{slug}/scale_teams`: one `.scaleteam-list-item` per booking —
@@ -821,4 +969,60 @@ fn urlencoding_lite(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synthetic mine page: forms shaped like the captured requests
+    /// (`PUT` via `_method`, one `authenticity_token` per form).
+    const MINE: &str = r#"<html><head><meta name="csrf-token" content="meta-tok"></head><body>
+      <div class="project-status-box" data-status="in_progress"></div>
+      <form action="/projects/python-module-00/teams/7747270/close" method="post">
+        <input type="hidden" name="_method" value="put">
+        <input type="hidden" name="authenticity_token" value="close-tok">
+      </form>
+      <form action="/projects/python-module-00/teams/7747270/give_up" method="post">
+        <input type="hidden" name="_method" value="put">
+        <input type="hidden" name="authenticity_token" value="giveup-tok">
+      </form></body></html>"#;
+
+    #[test]
+    fn parses_close_and_give_up_forms() {
+        let mine = parse_project_mine(MINE).unwrap();
+        let close = mine.close_action.unwrap();
+        assert_eq!(
+            close.url,
+            "https://projects.intra.42.fr/projects/python-module-00/teams/7747270/close"
+        );
+        assert_eq!(close.token, "close-tok");
+        let give_up = mine.give_up_action.unwrap();
+        assert!(give_up.url.ends_with("/teams/7747270/give_up"));
+        assert_eq!(give_up.token, "giveup-tok");
+    }
+
+    /// Captured 2026-10-15 from a locked solo project: the finish form
+    /// sits in a modal, its token input after the button.
+    #[test]
+    fn parses_captured_finish_modal() {
+        let html = r#"<div class='team-actions'><div class='modal-footer'>
+<form class="inline" method="post" action="/projects/rag-against-the-machine/teams/7554912/close"><input type="hidden" name="_method" value="put" /><button class="btn btn-success" type="submit">Finish</button><input type="hidden" name="authenticity_token" value="tok==" /></form></div></div>"#;
+        let mine = parse_project_mine(html).unwrap();
+        let close = mine.close_action.unwrap();
+        assert!(close.url.ends_with("/rag-against-the-machine/teams/7554912/close"));
+        assert_eq!(close.token, "tok==");
+        assert!(mine.give_up_action.is_none());
+    }
+
+    #[test]
+    fn team_action_body_overrides_method() {
+        assert_eq!(
+            team_action_form("t"),
+            [
+                ("_method", "put".to_owned()),
+                ("authenticity_token", "t".to_owned())
+            ]
+        );
+    }
 }

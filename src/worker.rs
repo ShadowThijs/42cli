@@ -64,6 +64,42 @@ pub async fn dispatch(api: Arc<Api>, tx: Sender<Msg>, command: Command) {
             let _ = tx.send(Msg::Mine { slug, result });
         }
 
+        Command::TeamAction {
+            slug,
+            kind,
+            url,
+            token,
+        } => {
+            let result = api.project_team_action(&slug, &url, &token).await;
+            let ok = result.is_ok();
+            let _ = tx.send(Msg::TeamActionDone {
+                slug: slug.clone(),
+                kind,
+                result,
+            });
+            if ok {
+                // Intra applies the change a moment after the redirect: poll
+                // the page until the action's form is gone (max ~5 s) so the
+                // UI never offers an already-applied action again.
+                let mut mine = api.project_mine(&slug, true).await;
+                for _ in 0..5 {
+                    let still_offered = match &mine {
+                        Ok(page) => match kind {
+                            TeamActionKind::Close => page.close_action.is_some(),
+                            TeamActionKind::GiveUp => page.give_up_action.is_some(),
+                        },
+                        Err(_) => false,
+                    };
+                    if !still_offered {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    mine = api.project_mine(&slug, true).await;
+                }
+                let _ = tx.send(Msg::Mine { slug, result: mine });
+            }
+        }
+
         Command::LoadSchedule { slug, fresh } => {
             let result = api.project_schedule(&slug, fresh).await;
             let _ = tx.send(Msg::Schedule { slug, result });

@@ -129,6 +129,10 @@ impl App {
                 let slot = self.projects.subjects.entry(slug).or_default();
                 slot.set(result);
             }
+            Msg::TeamActionDone { slug, kind, result } => match result {
+                Ok(()) => self.set_status(format!("{slug}: {} done", kind.verb())),
+                Err(error) => self.set_status(format!("{slug}: {} failed: {error}", kind.verb())),
+            },
             Msg::DownloadDone { name, result } => {
                 self.projects.downloading.remove(&name);
                 match result {
