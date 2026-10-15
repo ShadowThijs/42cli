@@ -22,7 +22,7 @@ pub fn handle_term_event(app: &mut App, event: Event) -> Action {
 fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     // Overlays swallow everything.
     if app.help_open {
-        app.help_open = false;
+        ui::help::handle_key(app, key);
         return Action::Continue;
     }
     if app.notifications_open {
@@ -101,6 +101,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
             }
             (KeyCode::Char('?'), _) => {
                 app.help_open = true;
+                app.help_scroll = 0;
                 return Action::Continue;
             }
             (KeyCode::Char('n'), _) => {

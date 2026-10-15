@@ -77,6 +77,9 @@ pub struct App {
     pub notifications_sel: usize,
     pub event_popup: Option<crate::state::EventPopup>,
     pub help_open: bool,
+    /// Help overlay scroll offset and the max it can reach (set by draw).
+    pub help_scroll: u16,
+    pub help_max_scroll: std::cell::Cell<u16>,
     pub status: Option<(String, Instant)>,
     pub tick: u64,
     /// Editor to launch once the event loop can suspend the TUI, with the
@@ -114,6 +117,8 @@ impl App {
             notifications_sel: 0,
             event_popup: None,
             help_open: false,
+            help_scroll: 0,
+            help_max_scroll: std::cell::Cell::new(0),
             status: None,
             tick: 0,
             pending_editor: None,

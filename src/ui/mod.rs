@@ -70,7 +70,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_notifications(frame, app, area);
     }
     if app.help_open {
-        help::draw(frame, area);
+        help::draw(frame, app, area);
     }
 }
 
